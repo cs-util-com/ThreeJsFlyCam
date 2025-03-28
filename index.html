@@ -37,19 +37,13 @@
 
         // --- Global Variables ---
         let scene, camera, renderer, pivot;
-        let clock = new THREE.Clock();
-        
-        // State tracking
+        const clock = new THREE.Clock();
         const movementState = { forward: 0, right: 0, shift: false };
         let pitch = 0, yaw = 0, isPointerLocked = false;
-        
-        // DOM elements
         const elements = {
             crosshair: document.getElementById('crosshair'),
             instructions: document.getElementById('instructions')
         };
-        
-        // Reusable vectors
         const vec = {
             direction: new THREE.Vector3(),
             right: new THREE.Vector3(),
@@ -57,16 +51,33 @@
             worldUp: new THREE.Vector3(0, 1, 0)
         };
 
-        // --- Initialization ---
-        function init() {
-            setupScene();
-            createObjects();
-            setupEventListeners();
-            animate();
+        // Create all mesh objects from configuration array
+        function createObjects() {
+            // Format: [geometry, color, position, optional rotation]
+            const objects = [
+                [new THREE.BoxGeometry(2, 2, 2), 0xff0000, [10, 1, 0]],
+                [new THREE.SphereGeometry(1.5, 32, 16), 0x0000ff, [-8, 1.5, -5]],
+                [new THREE.ConeGeometry(1.5, 3, 32), 0xffff00, [0, 1.5, -12]],
+                [new THREE.BoxGeometry(20, 20, 20), 0x9370DB, [70, 10, -50]],
+                [new THREE.TorusGeometry(15, 5, 16, 50), 0x00CED1, [-80, 20, -90], {x: Math.PI/2}],
+                [new THREE.CylinderGeometry(10, 10, 30, 32), 0xFF8C00, [30, 15, -120]],
+                [new THREE.ConeGeometry(15, 30, 4), 0x32CD32, [-40, 15, -150]]
+            ];
+            
+            objects.forEach(([geometry, color, position, rotation]) => {
+                const mesh = new THREE.Mesh(
+                    geometry, 
+                    new THREE.MeshStandardMaterial({ color })
+                );
+                mesh.position.set(...position);
+                if (rotation) Object.entries(rotation).forEach(([axis, value]) => mesh.rotation[axis] = value);
+                scene.add(mesh);
+            });
         }
         
-        function setupScene() {
-            // Scene
+        // Initialize scene, camera, and renderer
+        function init() {
+            // Scene setup
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x353ebd);
             scene.fog = new THREE.Fog(0x87ceeb, 1, 200);
@@ -77,108 +88,70 @@
             renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
             
-            // Camera
+            // Camera & pivot
             camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
-            
-            // Pivot Point
             pivot = new THREE.Object3D();
             pivot.position.set(0, 1.7, 0);
             scene.add(pivot);
-            
             updateCameraPosition();
             
             // Lighting
             scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            scene.add(new THREE.DirectionalLight(0xffffff, 0.8).translateSet(10, 20, 5));
             
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight.position.set(10, 20, 5);
-            scene.add(directionalLight);
+            // Add objects, setup events, start animation
+            createObjects();
+            setupEventListeners();
+            requestAnimationFrame(animate);
         }
         
-        function createObjects() {
-            // Simple objects
-            createMesh(new THREE.BoxGeometry(2, 2, 2), 0xff0000, [10, 1, 0]);
-            createMesh(new THREE.SphereGeometry(1.5, 32, 16), 0x0000ff, [-8, 1.5, -5]);
-            createMesh(new THREE.ConeGeometry(1.5, 3, 32), 0xffff00, [0, 1.5, -12]);
-            
-            // Giant objects
-            createMesh(new THREE.BoxGeometry(20, 20, 20), 0x9370DB, [70, 10, -50]);
-            
-            const torus = createMesh(new THREE.TorusGeometry(15, 5, 16, 50), 0x00CED1, [-80, 20, -90]);
-            torus.rotation.x = Math.PI / 2;
-            
-            createMesh(new THREE.CylinderGeometry(10, 10, 30, 32), 0xFF8C00, [30, 15, -120]);
-            createMesh(new THREE.ConeGeometry(15, 30, 4), 0x32CD32, [-40, 15, -150]);
-        }
-        
-        function createMesh(geometry, color, position) {
-            const material = new THREE.MeshStandardMaterial({ color });
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.position.set(...position);
-            scene.add(mesh);
-            return mesh;
-        }
-        
+        // Setup all event listeners
         function setupEventListeners() {
+            // Window resize
             window.addEventListener('resize', () => {
                 camera.aspect = window.innerWidth / window.innerHeight;
                 camera.updateProjectionMatrix();
                 renderer.setSize(window.innerWidth, window.innerHeight);
             });
             
-            // Key handlers
-            const keyActions = {
-                'KeyW': () => movementState.forward = 1,
-                'ArrowUp': () => movementState.forward = 1,
-                'KeyS': () => movementState.forward = -1,
-                'ArrowDown': () => movementState.forward = -1,
-                'KeyA': () => movementState.right = -1,
-                'ArrowLeft': () => movementState.right = -1,
-                'KeyD': () => movementState.right = 1,
-                'ArrowRight': () => movementState.right = 1,
-                'ShiftLeft': () => movementState.shift = true,
-                'ShiftRight': () => movementState.shift = true
+            // Key handlers - reuse the same patterns for down/up
+            const keyMap = {
+                'KeyW': ['forward', 1], 'ArrowUp': ['forward', 1],
+                'KeyS': ['forward', -1], 'ArrowDown': ['forward', -1],
+                'KeyA': ['right', -1], 'ArrowLeft': ['right', -1],
+                'KeyD': ['right', 1], 'ArrowRight': ['right', 1],
+                'ShiftLeft': ['shift', true], 'ShiftRight': ['shift', true]
             };
             
             document.addEventListener('keydown', (event) => {
-                if (!isPointerLocked) return;
-                const action = keyActions[event.code];
-                if (action) action();
+                if (!isPointerLocked || !keyMap[event.code]) return;
+                const [property, value] = keyMap[event.code];
+                movementState[property] = value;
             });
             
             document.addEventListener('keyup', (event) => {
-                if (event.code === 'KeyW' || event.code === 'ArrowUp') {
-                    if (movementState.forward === 1) movementState.forward = 0;
-                } else if (event.code === 'KeyS' || event.code === 'ArrowDown') {
-                    if (movementState.forward === -1) movementState.forward = 0;
-                } else if (event.code === 'KeyA' || event.code === 'ArrowLeft') {
-                    if (movementState.right === -1) movementState.right = 0;
-                } else if (event.code === 'KeyD' || event.code === 'ArrowRight') {
-                    if (movementState.right === 1) movementState.right = 0;
-                } else if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
-                    movementState.shift = false;
+                if (!keyMap[event.code]) return;
+                const [property, value] = keyMap[event.code];
+                if (property === 'shift' || movementState[property] === value) {
+                    movementState[property] = property === 'shift' ? false : 0;
                 }
             });
             
+            // Mouse and pointer lock
             document.addEventListener('mousemove', (event) => {
                 if (!isPointerLocked) return;
-                
-                // Update rotations
                 yaw -= (event.movementX || 0) * config.mouseSensitivity;
-                pitch -= (event.movementY || 0) * config.mouseSensitivity;
-                pitch = Math.max(-config.verticalRotationLimit, Math.min(config.verticalRotationLimit, pitch));
+                pitch = Math.max(-config.verticalRotationLimit, 
+                         Math.min(config.verticalRotationLimit, 
+                         pitch - (event.movementY || 0) * config.mouseSensitivity));
             });
             
+            // Pointer lock events
             document.addEventListener('pointerlockchange', () => {
                 isPointerLocked = document.pointerLockElement === renderer.domElement;
                 elements.crosshair.style.display = isPointerLocked ? 'block' : 'none';
                 elements.instructions.style.display = isPointerLocked ? 'none' : 'block';
-                
-                if (!isPointerLocked) {
-                    movementState.forward = 0;
-                    movementState.right = 0;
-                    movementState.shift = false;
-                }
+                if (!isPointerLocked) Object.assign(movementState, {forward: 0, right: 0, shift: false});
             });
             
             document.addEventListener('pointerlockerror', () => {
@@ -193,46 +166,54 @@
             });
         }
         
+        // Update camera position based on pivot position and rotation
         function updateCameraPosition() {
-            const offset = new THREE.Vector3(0, 0, config.initialCameraDistance);
             const quaternion = new THREE.Quaternion()
                 .setFromAxisAngle(vec.worldUp, yaw)
                 .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch));
             
-            offset.applyQuaternion(quaternion);
-            camera.position.copy(pivot.position).add(offset);
+            camera.position.copy(pivot.position)
+                .add(new THREE.Vector3(0, 0, config.initialCameraDistance).applyQuaternion(quaternion));
             camera.quaternion.copy(quaternion);
         }
         
+        // Update position based on movement state
         function update(deltaTime) {
-            const speed = movementState.shift ? config.moveSpeed.boost : config.moveSpeed.normal;
-            const moveDelta = speed * deltaTime;
-            
-            // Calculate movement vector
-            vec.move.set(0, 0, 0);
-            
+            // Only calculate movement if needed
             if (movementState.forward || movementState.right) {
+                // Get movement directions
                 camera.getWorldDirection(vec.direction);
                 vec.right.crossVectors(vec.worldUp, vec.direction).normalize();
                 
+                // Calculate movement vector
+                vec.move.set(0, 0, 0);
                 if (movementState.forward) vec.move.addScaledVector(vec.direction, movementState.forward);
                 if (movementState.right) vec.move.addScaledVector(vec.right, -movementState.right);
                 
                 if (vec.move.lengthSq() > 0.001) vec.move.normalize();
                 
-                pivot.position.addScaledVector(vec.move, moveDelta);
+                // Apply movement
+                const speed = movementState.shift ? config.moveSpeed.boost : config.moveSpeed.normal;
+                pivot.position.addScaledVector(vec.move, speed * deltaTime);
             }
             
             updateCameraPosition();
         }
         
+        // Animation loop
         function animate() {
             requestAnimationFrame(animate);
             if (isPointerLocked) update(clock.getDelta());
             renderer.render(scene, camera);
         }
         
-        // --- Start ---
+        // Add utility method to DirectionalLight for positioning
+        THREE.DirectionalLight.prototype.translateSet = function(x, y, z) {
+            this.position.set(x, y, z);
+            return this;
+        };
+        
+        // Start
         init();
     </script>
 </body>
