@@ -83,7 +83,8 @@
             snapAxis: null,
             globalScaleFactor: 1.0,
             lastClickTime: 0,
-            currentColorIndex: 0
+            currentColorIndex: 0,
+            isLoop: false
         };
         
         // Pastel colors for measurement lines
@@ -406,22 +407,60 @@
             return -1;
         }
         
+        // Compute surface area of a closed loop
+        function computeSurfaceArea(points) {
+            // Simple Newell's method for polygon area in 3D:
+            let normal = new THREE.Vector3();
+            for (let i = 0; i < points.length; i++) {
+                const current = points[i];
+                const next = points[(i + 1) % points.length];
+                normal.x += (current.y - next.y) * (current.z + next.z);
+                normal.y += (current.z - next.z) * (current.x + next.x);
+                normal.z += (current.x - next.x) * (current.y + next.y);
+            }
+            return 0.5 * normal.length();
+        }
+
+        // Handle loop closure
+        function handleLoopClosed() {
+            measurementState.isLoop = true;
+            const area = computeSurfaceArea(measurementState.points);
+            const center = new THREE.Vector3();
+            measurementState.points.forEach(p => center.add(p));
+            center.multiplyScalar(1 / measurementState.points.length);
+            const areaLabel = createTextLabel(`Area: ${(area * measurementState.globalScaleFactor ** 2).toFixed(2)}`,
+                center, measurementState.currentLineColor);
+            measurementGroup.add(areaLabel);
+            measurementObjects.labels.push(areaLabel);
+            completeMeasurement();
+        }
+
         // Add a new measurement point
         function addMeasurementPoint(position) {
             measurementState.points.push(position);
-            
+
             const pointGeometry = new THREE.SphereGeometry(0.05, 8, 8);
             const pointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
             const pointObject = new THREE.Mesh(pointGeometry, pointMaterial);
             pointObject.position.copy(position);
             pointObject.userData.isReferencePoint = true; // Tag as reference point
             measurementGroup.add(pointObject);
-            
+            measurementObjects.points.push(pointObject);
+
+            if (measurementState.points.length >= 3) {
+                const distToFirst = position.distanceTo(measurementState.points[0]);
+                if (distToFirst < 0.01) {
+                    position.copy(measurementState.points[0]);
+                    handleLoopClosed();
+                    return;
+                }
+            }
+
             if (measurementState.points.length > 1) {
                 const lastTwoPoints = measurementState.points.slice(-2);
                 createMeasurementSegment(lastTwoPoints[0], lastTwoPoints[1]);
             }
-            
+
             updateMeasurementPreview();
         }
         
@@ -717,6 +756,10 @@
                 measurementObjects.labels.push(totalLabel);
             }
             
+            if (measurementState.isLoop) {
+                measurementState.isLoop = false;
+            }
+
             measurementState.points = [];
             measurementState.measuring = false;
             
