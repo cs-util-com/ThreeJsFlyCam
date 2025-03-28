@@ -46,7 +46,10 @@
 
         // --- Configuration ---
         const config = {
-            initialCameraDistance: 10,
+            initialCameraDistance: 5,
+            minCameraDistance: 0.3,
+            maxCameraDistance: 100,
+            zoomSpeed: 0.9,
             moveSpeed: { normal: 6.0, boost: 16.0 },
             mouseSensitivity: 0.002,
             verticalRotationLimit: Math.PI / 2 - 0.01
@@ -57,6 +60,7 @@
         const clock = new THREE.Clock();
         const movementState = { forward: 0, right: 0, shift: false };
         let pitch = 0, yaw = 0, isPointerLocked = false;
+        let cameraDistance = config.initialCameraDistance;
         const elements = {
             crosshair: document.getElementById('crosshair'),
             instructions: document.getElementById('instructions'),
@@ -271,6 +275,25 @@
                 
                 isDragging = false;
             });
+
+            // Mouse wheel for zoom
+            renderer.domElement.addEventListener('wheel', (event) => {
+                if (!isPointerLocked) return;
+                
+                event.preventDefault();
+                
+                // Determine scroll direction and amount
+                const delta = Math.sign(event.deltaY) * config.zoomSpeed;
+                
+                // Update camera distance with limits
+                cameraDistance = THREE.MathUtils.clamp(
+                    cameraDistance + delta,
+                    config.minCameraDistance,
+                    config.maxCameraDistance
+                );
+                
+                updateCameraPosition();
+            }, { passive: false });
         }
         
         // Setup measurement tool UI and events
@@ -418,10 +441,15 @@
             context.fillText(text, canvas.width / 2, canvas.height / 2);
             
             const texture = new THREE.CanvasTexture(canvas);
-            const material = new THREE.SpriteMaterial({ map: texture });
+            const material = new THREE.SpriteMaterial({ 
+                map: texture,
+                depthTest: false,
+                depthWrite: false,
+            });
             const sprite = new THREE.Sprite(material);
             sprite.position.copy(position);
-            sprite.scale.set(1, 0.25, 1);
+            sprite.scale.set(1.5, 0.4, 1);
+            sprite.renderOrder = 999;  // Ensure labels render on top
             
             sprite.userData.text = text;
             
@@ -847,7 +875,7 @@
                 .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch));
             
             camera.position.copy(pivot.position)
-                .add(new THREE.Vector3(0, 0, config.initialCameraDistance).applyQuaternion(quaternion));
+                .add(new THREE.Vector3(0, 0, cameraDistance).applyQuaternion(quaternion));
             camera.quaternion.copy(quaternion);
         }
         
