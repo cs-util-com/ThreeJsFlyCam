@@ -1,147 +1,330 @@
-<!-- User Stories & Requirements for the code below:
-
-- This is a template for a single-page HTML web app.
-- A monospace font should be used.
-- No backend; all data is stored locally.
-
-Main user stories:
-- ...
-
-Keep this comment block in the code.
-Simplify the code if possible (without removing the functionality described above). 
-You MUST keep all comments in the code below, even if you think they are redundant.
-Always respond with the full new html file (including these comments here), 
-additional explanations what you change are nice to have but not necessary. 
--->
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Decoupled Modules Example with Person Class</title>
-  <!-- Favicon: A white box --> <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23fff'/%3E%3C/svg%3E" type="image/svg+xml">
-  <!-- Added Tailwind CSS via CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    @view-transition {
-      navigation: auto;
-    }
-    
-    nav a[aria-current="page"]:after {
-      border-color: white;
-      view-transition-name: posts-nav;
-    }
-    
-    /* Old stuff going out */
-    ::view-transition-old(posts-nav) {
-      animation: fade 0.2s linear forwards;
-      height: 100%;
-    }
-    
-    /* New stuff coming in */
-    ::view-transition-new(posts-nav) {
-      animation: fade 0.3s linear reverse;
-      height: 100%;
-    }
-    
-    @keyframes fade {
-      from { opacity: 1; }
-      to { opacity: 0; }
-    }
-  </style>
-  <script>
-    // Only use if browser supports View Transitions
-    if (document.startViewTransition) {
-      window.addEventListener('click', (e) => {
-        // Only handle internal links
-        if (e.target.tagName === 'A' && e.target.origin === window.location.origin) {
-          e.preventDefault();
-          document.startViewTransition(() => {
-            window.location.href = e.target.href;
-          });
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Fly Navigation - Three.js</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #333; }
+        canvas { display: block; }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 2px; /* crosshairSize constant */
+            height: 2px; /* crosshairSize constant */
+            background-color: white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none; /* Allows clicking through */
+            display: none; /* Hidden until pointer lock */
         }
-      });
-    }
-  </script>
+        #instructions {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: sans-serif;
+            background-color: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
 </head>
-<body class="font-mono p-8 bg-gray-50">
-  <div class="max-w-4xl mx-auto">
-    <header class="mb-8">
-      <h1 class="text-3xl font-bold text-blue-600 mb-4">Template Web App</h1>
-      <nav class="bg-blue-600 text-white p-4 rounded-lg mb-4">
-        <a href="index.html" class="mr-6 hover:underline font-bold relative" aria-current="page">
-          Home
-          <span class="absolute bottom-0 left-0 w-full h-0.5 bg-white"></span>
-        </a>
-        <a href="features.html" class="mr-6 hover:underline">Features</a>
-        <a href="about.html" class="hover:underline">About</a>
-      </nav>
-      <div class="bg-blue-100 border-l-4 border-blue-500 p-4 mb-6">
-        <p class="text-sm text-blue-700">This is a Tailwind CSS demonstration with modular JavaScript.</p>
-      </div>
-    </header>
-    
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-      <!-- Card 1 -->
-      <div class="bg-white p-6 rounded-lg shadow-md">
-        <h2 class="text-xl font-bold mb-4 text-gray-800">Greeting Card</h2>
-        <p class="text-gray-600 mb-4">Click the button below to greet the person.</p>
-        <button id="greetBtn" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition duration-300">
-          Greet
-        </button>
-      </div>
-      
-      <!-- Card 2 -->
-      <div class="bg-white p-6 rounded-lg shadow-md">
-        <h2 class="text-xl font-bold mb-4 text-gray-800">Tailwind Features</h2>
-        <ul class="list-disc pl-5 space-y-2 text-gray-600">
-          <li>Responsive design with <span class="font-bold text-blue-500">breakpoints</span></li>
-          <li>Utility-first CSS framework</li>
-          <li>Customizable with configuration</li>
-        </ul>
-        <div class="mt-4">
-          <div class="flex gap-2">
-            <span class="bg-red-200 text-red-800 text-xs p-1 rounded">Tag</span>
-            <span class="bg-green-200 text-green-800 text-xs p-1 rounded">Utility</span>
-            <span class="bg-yellow-200 text-yellow-800 text-xs p-1 rounded">Responsive</span>
-          </div>
-        </div>
-      </div>
+<body>
+    <div id="instructions">
+        Click to start navigation<br/>
+        WASD/Arrows: Move<br/>
+        Shift: Speed Boost<br/>
+        Mouse: Look<br/>
+        ESC: Release Mouse
     </div>
-    
-    <div class="bg-white p-6 rounded-lg shadow">
-      <h2 class="text-xl font-bold mb-4 text-gray-800">Interactive Components</h2>
-      <div class="mb-4">
-        <label class="block text-gray-700 text-sm font-bold mb-2" for="username">
-          Username
-        </label>
-        <input class="w-full p-2 border rounded text-gray-700 focus:outline-none focus:shadow-outline" id="username" type="text" placeholder="Username">
-      </div>
-      <div class="flex justify-between">
-        <button class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded focus:outline-none transition">
-          Save
-        </button>
-        <button class="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded focus:outline-none transition">
-          Cancel
-        </button>
-      </div>
-    </div>
-  </div>
-  
-  <!-- Load the main module -->
-  <script type="module">
+    <div id="crosshair"></div>
 
-    import { tellBirthday } from './utils.js';
-    import { Person } from './person.js';
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
 
-    // Create a new Person instance with values defined in the HTML.
-    const person = new Person('Alice', 40);
-    document.getElementById('greetBtn').addEventListener('click', () => {
-      alert(tellBirthday(person));
-    });
+    <script type="module">
+        import * as THREE from 'three';
 
-  </script>
+        // --- Configuration Constants ---
+        const initialCameraDistance = 10;   // meters
+        const normalMoveSpeed = 1.0;      // meters/second
+        const boostMoveSpeed = 5.0;       // meters/second (Increased from 2 for better feel)
+        const mouseSensitivity = 0.002;   // radians/pixel delta
+        const crosshairSize = 2;        // pixels (Reflected in CSS)
+        const verticalRotationLimit = Math.PI / 2 - 0.01; // Radians (~ +/- 89.9 deg)
 
+        // --- Global Variables ---
+        let scene, camera, renderer, pivot;
+        let clock = new THREE.Clock();
+
+        // Movement State
+        const movementState = {
+            forward: 0, // -1 for backward, 1 for forward
+            right: 0,   // -1 for left, 1 for right
+            shift: false
+        };
+
+        // Rotation State
+        let pitch = 0; // Vertical angle
+        let yaw = 0;   // Horizontal angle
+        let isPointerLocked = false;
+
+        const crosshairElement = document.getElementById('crosshair');
+        const instructionsElement = document.getElementById('instructions');
+
+        // --- Initialization ---
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb); // Sky blue background
+            scene.fog = new THREE.Fog(0x87ceeb, 50, 200);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            // renderer.shadowMap.enabled = true; // Enable if using lights/shadows
+            document.body.appendChild(renderer.domElement);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+            // Pivot Point (using Object3D for easier management)
+            pivot = new THREE.Object3D();
+            pivot.position.set(0, 1.7, 0); // Start slightly above ground
+            scene.add(pivot);
+
+            // Set initial camera position relative to pivot
+            updateCameraPosition();
+            camera.lookAt(pivot.position);
+
+            // --- Scene Content ---
+            // Ground Plane
+            const groundGeo = new THREE.PlaneGeometry(500, 500);
+            const groundMat = new THREE.MeshStandardMaterial({ color: 0x228B22, side: THREE.DoubleSide }); // Forest green
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            // ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Simple Shapes
+            const boxGeo = new THREE.BoxGeometry(2, 2, 2);
+            const sphereGeo = new THREE.SphereGeometry(1.5, 32, 16);
+            const coneGeo = new THREE.ConeGeometry(1.5, 3, 32);
+
+            const mat1 = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Red
+            const mat2 = new THREE.MeshStandardMaterial({ color: 0x0000ff }); // Blue
+            const mat3 = new THREE.MeshStandardMaterial({ color: 0xffff00 }); // Yellow
+
+            const box = new THREE.Mesh(boxGeo, mat1);
+            box.position.set(10, 1, 0);
+            // box.castShadow = true;
+            scene.add(box);
+
+            const sphere = new THREE.Mesh(sphereGeo, mat2);
+            sphere.position.set(-8, 1.5, -5);
+            // sphere.castShadow = true;
+            scene.add(sphere);
+
+            const cone = new THREE.Mesh(coneGeo, mat3);
+            cone.position.set(0, 1.5, -12);
+            // cone.castShadow = true;
+            scene.add(cone);
+
+            // --- Lighting ---
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(10, 20, 5);
+            // directionalLight.castShadow = true;
+            // Configure shadow properties if needed
+            scene.add(directionalLight);
+
+
+            // --- Event Listeners ---
+            window.addEventListener('resize', onWindowResize);
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('pointerlockchange', onPointerLockChange);
+            document.addEventListener('pointerlockerror', onPointerLockError);
+            renderer.domElement.addEventListener('click', () => {
+                renderer.domElement.requestPointerLock();
+            });
+
+            // Start Animation Loop
+            animate();
+        }
+
+        // --- Event Handlers ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function onKeyDown(event) {
+            if (!isPointerLocked) return;
+            switch (event.code) {
+                case 'KeyW':
+                case 'ArrowUp':
+                    movementState.forward = 1;
+                    break;
+                case 'KeyS':
+                case 'ArrowDown':
+                    movementState.forward = -1;
+                    break;
+                case 'KeyA':
+                case 'ArrowLeft':
+                    movementState.right = -1;
+                    break;
+                case 'KeyD':
+                case 'ArrowRight':
+                    movementState.right = 1;
+                    break;
+                case 'ShiftLeft':
+                case 'ShiftRight':
+                    movementState.shift = true;
+                    break;
+            }
+        }
+
+        function onKeyUp(event) {
+            switch (event.code) {
+                case 'KeyW':
+                case 'ArrowUp':
+                    if (movementState.forward === 1) movementState.forward = 0;
+                    break;
+                case 'KeyS':
+                case 'ArrowDown':
+                    if (movementState.forward === -1) movementState.forward = 0;
+                    break;
+                case 'KeyA':
+                case 'ArrowLeft':
+                    if (movementState.right === -1) movementState.right = 0;
+                    break;
+                case 'KeyD':
+                case 'ArrowRight':
+                    if (movementState.right === 1) movementState.right = 0;
+                    break;
+                case 'ShiftLeft':
+                case 'ShiftRight':
+                    movementState.shift = false;
+                    break;
+            }
+        }
+
+        function onMouseMove(event) {
+            if (!isPointerLocked) return;
+
+            const deltaX = event.movementX || 0;
+            const deltaY = event.movementY || 0;
+
+            // Update Yaw (horizontal rotation) - Rotate the pivot itself
+            yaw -= deltaX * mouseSensitivity;
+
+            // Update Pitch (vertical rotation) - Clamp vertical angle
+            pitch -= deltaY * mouseSensitivity;
+            pitch = Math.max(-verticalRotationLimit, Math.min(verticalRotationLimit, pitch));
+
+            // Apply yaw rotation to the pivot object directly
+            pivot.rotation.y = yaw;
+
+            // Camera position is updated relative to the pivot in the update loop
+        }
+
+        function onPointerLockChange() {
+            if (document.pointerLockElement === renderer.domElement) {
+                isPointerLocked = true;
+                crosshairElement.style.display = 'block';
+                instructionsElement.style.display = 'none';
+            } else {
+                isPointerLocked = false;
+                crosshairElement.style.display = 'none';
+                instructionsElement.style.display = 'block';
+                // Reset movement when releasing lock to prevent runaway movement
+                movementState.forward = 0;
+                movementState.right = 0;
+                movementState.shift = false;
+            }
+        }
+
+        function onPointerLockError() {
+            console.error('Pointer Lock failed.');
+            isPointerLocked = false;
+            crosshairElement.style.display = 'none';
+            instructionsElement.style.display = 'block';
+        }
+
+        // --- Update Camera Position relative to Pivot ---
+        function updateCameraPosition() {
+            // Calculate offset based on pitch and distance
+            const offset = new THREE.Vector3(0, 0, initialCameraDistance); // Start behind pivot
+
+            // Apply pitch rotation (around pivot's local X-axis)
+            // We use a Quaternion to rotate the offset vector
+            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
+            offset.applyQuaternion(pitchQuat);
+
+            // Apply yaw rotation (around pivot's local Y-axis - pivot already rotated)
+            // Now transform the offset to world space based on the pivot's rotation
+             offset.applyQuaternion(pivot.quaternion);
+
+            // Set camera position
+            camera.position.copy(pivot.position).add(offset);
+
+            // Ensure camera looks at the pivot
+            camera.lookAt(pivot.position);
+        }
+
+
+        // --- Update Logic ---
+        function update(deltaTime) {
+            const currentSpeed = movementState.shift ? boostMoveSpeed : normalMoveSpeed;
+            const moveDelta = currentSpeed * deltaTime;
+
+            // Get pivot's forward and right directions (based on its Y rotation)
+            const forward = new THREE.Vector3();
+            pivot.getWorldDirection(forward); // Pivot's forward direction
+            const right = new THREE.Vector3().crossVectors(pivot.up, forward).normalize(); // Pivot's right
+
+            // Calculate movement vector in world space
+            const moveVector = new THREE.Vector3();
+            moveVector.addScaledVector(forward, movementState.forward);
+            moveVector.addScaledVector(right, movementState.right);
+            moveVector.normalize(); // Ensure consistent speed diagonally
+
+            // Apply movement to the pivot
+            pivot.position.addScaledVector(moveVector, moveDelta);
+
+            // Update camera position based on new pivot position and current pitch/yaw
+            updateCameraPosition();
+        }
+
+        // --- Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const deltaTime = clock.getDelta();
+
+            if (isPointerLocked) {
+                 update(deltaTime);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // --- Start ---
+        init();
+
+    </script>
 </body>
 </html>
