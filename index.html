@@ -495,8 +495,10 @@
             sprite.scale.set(1.5, 0.4, 1);
             sprite.renderOrder = 999;  // Ensure labels render on top
             
+            // Make sure these properties are set to enable raycasting
             sprite.userData.text = text;
             sprite.userData.color = color;
+            sprite.userData.isInteractive = true;
             
             return sprite;
         }
@@ -849,6 +851,52 @@
         
         // Handle double-click on labels for editing
         document.addEventListener('dblclick', (event) => {
+            // Calculate mouse position for raycasting
+            const mouse = new THREE.Vector2(
+                (event.clientX / window.innerWidth) * 2 - 1,
+                -(event.clientY / window.innerHeight) * 2 + 1
+            );
+            
+            // Setup raycaster
+            raycaster.setFromCamera(mouse, camera);
+            
+            // Check for intersections with all measurement labels
+            const intersects = raycaster.intersectObjects(measurementObjects.labels);
+            
+            if (intersects.length > 0) {
+                const label = intersects[0].object;
+                
+                // Skip total labels
+                if (label.userData.isTotal) return;
+                
+                // Release pointer lock if we're in locked mode
+                if (isPointerLocked) {
+                    document.exitPointerLock();
+                    
+                    // Store label for editing after pointer is released
+                    setTimeout(() => {
+                        promptForLabelEdit(label);
+                    }, 100);
+                } else {
+                    promptForLabelEdit(label);
+                }
+            }
+        });
+
+        // Handle label editing in a separate function
+        function promptForLabelEdit(label) {
+            const newValue = prompt('Enter reference measurement value:', label.userData.text);
+            
+            if (newValue !== null && !isNaN(parseFloat(newValue))) {
+                const originalDistance = label.userData.originalDistance;
+                measurementState.globalScaleFactor = parseFloat(newValue) / originalDistance;
+                
+                updateAllMeasurementLabels();
+            }
+        }
+
+        // Support direct click on measurements with pointer lock
+        document.addEventListener('click', (event) => {
             if (!isPointerLocked) {
                 const mouse = new THREE.Vector2(
                     (event.clientX / window.innerWidth) * 2 - 1,
@@ -856,21 +904,11 @@
                 );
                 
                 raycaster.setFromCamera(mouse, camera);
-                const intersects = raycaster.intersectObjects(measurementObjects.labels, true);
+                const intersects = raycaster.intersectObjects(measurementObjects.labels);
                 
                 if (intersects.length > 0) {
-                    const label = intersects[0].object;
-                    
-                    if (label.userData.isTotal) return;
-                    
-                    const newValue = prompt('Enter reference measurement value:', label.userData.text);
-                    
-                    if (newValue !== null && !isNaN(parseFloat(newValue))) {
-                        const originalDistance = label.userData.originalDistance;
-                        measurementState.globalScaleFactor = parseFloat(newValue) / originalDistance;
-                        
-                        updateAllMeasurementLabels();
-                    }
+                    // This helps prevent double-click and single-click conflicts
+                    event.stopPropagation();
                 }
             }
         });
@@ -1003,6 +1041,11 @@
             if (measurementState.points.length > 0) {
                 updateMeasurementPreview();
             }
+            
+            // Make sure labels face the camera for better interaction
+            measurementObjects.labels.forEach(label => {
+                label.lookAt(camera.position);
+            });
             
             renderer.render(scene, camera);
         }
