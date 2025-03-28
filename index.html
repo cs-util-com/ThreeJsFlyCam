@@ -15,6 +15,23 @@
         ESC: Release Mouse
     </div>
     <div id="crosshair" class="absolute top-1/2 left-1/2 w-0.5 h-0.5 bg-white rounded-full transform -translate-x-1/2 -translate-y-1/2 pointer-events-none hidden"></div>
+    
+    <!-- Measurement Tool UI -->
+    <div id="measurement-controls" class="absolute bottom-2.5 left-2.5 text-white font-sans flex gap-2">
+        <button id="toggleMeasure" class="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded">Measure</button>
+        <button id="clearPoints" class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded">Clear Reference Points</button>
+        <button id="clearMeasurements" class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded">Clear Measurements</button>
+    </div>
+    
+    <div id="measurement-instructions" class="absolute top-2.5 right-2.5 text-white font-sans bg-black bg-opacity-50 p-2.5 rounded hidden">
+        <strong>Measurement Tool</strong><br/>
+        Click: Place point<br/>
+        Move mouse: Preview line<br/>
+        Arrow keys: Snap to axis<br/>
+        Delete: Remove last point<br/>
+        Esc: Complete measurement<br/>
+        Double-click label: Edit reference
+    </div>
 
     <script type="importmap">
         {
@@ -42,7 +59,8 @@
         let pitch = 0, yaw = 0, isPointerLocked = false;
         const elements = {
             crosshair: document.getElementById('crosshair'),
-            instructions: document.getElementById('instructions')
+            instructions: document.getElementById('instructions'),
+            measurementInstructions: document.getElementById('measurement-instructions')
         };
         const vec = {
             direction: new THREE.Vector3(),
@@ -50,6 +68,25 @@
             move: new THREE.Vector3(),
             worldUp: new THREE.Vector3(0, 1, 0)
         };
+
+        // --- Measurement Tool Variables ---
+        const measurementState = {
+            active: false,
+            measuring: false,
+            points: [],
+            previewPoint: new THREE.Vector3(),
+            currentLine: null,
+            snapAxis: null,
+            globalScaleFactor: 1.0
+        };
+        const measurementObjects = {
+            lines: [],
+            points: [],
+            labels: []
+        };
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let measurementGroup;
 
         // Create all mesh objects from configuration array
         function createObjects() {
@@ -100,9 +137,14 @@
                 new THREE.DirectionalLight(0xffffff, 2.8)
             );
             
+            // Create measurement group
+            measurementGroup = new THREE.Group();
+            scene.add(measurementGroup);
+            
             // Add objects, setup events, start animation
             createObjects();
             setupEventListeners();
+            setupMeasurementTools();
             requestAnimationFrame(animate);
         }
         
@@ -126,12 +168,19 @@
             };
             
             document.addEventListener('keydown', (event) => {
+                if (measurementState.measuring) {
+                    handleMeasurementKeydown(event);
+                    return;
+                }
+                
                 if (!isPointerLocked || !keyMap[event.code]) return;
                 const [property, value] = keyMap[event.code];
                 movementState[property] = value;
             });
             
             document.addEventListener('keyup', (event) => {
+                if (measurementState.measuring) return;
+                
                 if (!keyMap[event.code]) return;
                 const [property, value] = keyMap[event.code];
                 if (property === 'shift' || movementState[property] === value) {
@@ -141,6 +190,15 @@
             
             // Mouse and pointer lock
             document.addEventListener('mousemove', (event) => {
+                // Update mouse position for raycasting
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                
+                if (measurementState.measuring) {
+                    updateMeasurementPreview();
+                    return;
+                }
+                
                 if (!isPointerLocked) return;
                 yaw -= (event.movementX || 0) * config.mouseSensitivity;
                 pitch = THREE.MathUtils.clamp(
@@ -158,9 +216,635 @@
                 if (!isPointerLocked) Object.assign(movementState, {forward: 0, right: 0, shift: false});
             });
             
-            renderer.domElement.addEventListener('click', () => {
+            renderer.domElement.addEventListener('click', (event) => {
+                if (measurementState.measuring) {
+                    handleMeasurementClick(event);
+                    return;
+                }
+                
                 if (!isPointerLocked) renderer.domElement.requestPointerLock();
             });
+        }
+        
+        // Setup measurement tool UI and events
+        function setupMeasurementTools() {
+            // Button elements
+            const toggleButton = document.getElementById('toggleMeasure');
+            const clearPointsButton = document.getElementById('clearPoints');
+            const clearMeasurementsButton = document.getElementById('clearMeasurements');
+            
+            // Toggle measurement mode
+            toggleButton.addEventListener('click', () => {
+                measurementState.active = !measurementState.active;
+                toggleButton.textContent = measurementState.active ? 'Exit Measure' : 'Measure';
+                toggleButton.classList.toggle('bg-blue-600', !measurementState.active);
+                toggleButton.classList.toggle('bg-green-600', measurementState.active);
+                
+                if (measurementState.active) {
+                    // Exit pointer lock if active
+                    if (isPointerLocked) document.exitPointerLock();
+                    // Show measurement instructions
+                    elements.measurementInstructions.classList.remove('hidden');
+                    startNewMeasurement();
+                } else {
+                    // Hide measurement instructions
+                    elements.measurementInstructions.classList.add('hidden');
+                    // Cancel any in-progress measurement
+                    cancelCurrentMeasurement();
+                }
+            });
+            
+            // Clear all reference points
+            clearPointsButton.addEventListener('click', () => {
+                if (confirm('Are you sure you want to clear all reference points?')) {
+                    clearReferencePoints();
+                }
+            });
+            
+            // Clear all measurements
+            clearMeasurementsButton.addEventListener('click', () => {
+                if (confirm('Are you sure you want to clear all measurements?')) {
+                    clearAllMeasurements();
+                }
+            });
+        }
+        
+        // Handle measurement keydown events
+        function handleMeasurementKeydown(event) {
+            // Handle arrow keys for axis snapping
+            if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
+                measurementState.snapAxis = 'y';
+                event.preventDefault();
+            } else if (event.code === 'ArrowLeft') {
+                measurementState.snapAxis = 'x';
+                event.preventDefault();
+            } else if (event.code === 'ArrowRight') {
+                measurementState.snapAxis = 'z';
+                event.preventDefault();
+            } else if (event.code === 'Delete' || event.code === 'Backspace') {
+                // Remove last point
+                if (measurementState.points.length > 0) {
+                    removeLastMeasurementPoint();
+                }
+                event.preventDefault();
+            } else if (event.code === 'Escape') {
+                // Complete the measurement
+                if (measurementState.points.length >= 2) {
+                    completeMeasurement();
+                } else {
+                    cancelCurrentMeasurement();
+                }
+                event.preventDefault();
+            }
+            
+            // Update preview with new snap settings
+            updateMeasurementPreview();
+        }
+        
+        // Handle click when in measurement mode
+        function handleMeasurementClick(event) {
+            if (!measurementState.measuring) return;
+            
+            // Perform raycasting to find intersections
+            raycaster.setFromCamera(mouse, camera);
+            
+            // First check if we hit an existing reference point
+            const existingPointIndex = checkHitReferencePoint();
+            
+            if (existingPointIndex !== -1) {
+                // Use existing reference point
+                addMeasurementPoint(measurementObjects.points[existingPointIndex].position.clone());
+            } else {
+                // Check for intersections with scene objects
+                const intersects = raycaster.intersectObjects(scene.children, true);
+                
+                if (intersects.length > 0) {
+                    // Use the first intersection point
+                    const position = intersects[0].point.clone();
+                    
+                    // Apply axis snapping if active
+                    if (measurementState.snapAxis && measurementState.points.length > 0) {
+                        const lastPoint = measurementState.points[measurementState.points.length - 1];
+                        if (measurementState.snapAxis === 'x') {
+                            position.y = lastPoint.y;
+                            position.z = lastPoint.z;
+                        } else if (measurementState.snapAxis === 'y') {
+                            position.x = lastPoint.x;
+                            position.z = lastPoint.z;
+                        } else if (measurementState.snapAxis === 'z') {
+                            position.x = lastPoint.x;
+                            position.y = lastPoint.y;
+                        }
+                    }
+                    
+                    addMeasurementPoint(position);
+                }
+            }
+            
+            // Reset snap axis after adding a point
+            measurementState.snapAxis = null;
+        }
+        
+        // Check if ray hits an existing reference point
+        function checkHitReferencePoint() {
+            for (let i = 0; i < measurementObjects.points.length; i++) {
+                const pointObject = measurementObjects.points[i];
+                const pointPosition = pointObject.position.clone();
+                
+                // Convert point position to screen space
+                const screenPosition = pointPosition.clone().project(camera);
+                
+                // Check if mouse is close to this point (using a small threshold)
+                if (Math.abs(screenPosition.x - mouse.x) < 0.02 && 
+                    Math.abs(screenPosition.y - mouse.y) < 0.02) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+        
+        // Add a new measurement point
+        function addMeasurementPoint(position) {
+            // Add point to the current measurement
+            measurementState.points.push(position);
+            
+            // Create a reference point (white dot)
+            const pointGeometry = new THREE.SphereGeometry(0.05, 8, 8);
+            const pointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const pointObject = new THREE.Mesh(pointGeometry, pointMaterial);
+            pointObject.position.copy(position);
+            measurementGroup.add(pointObject);
+            
+            // If this is not the first point, create a line segment
+            if (measurementState.points.length > 1) {
+                const lastTwoPoints = measurementState.points.slice(-2);
+                createMeasurementSegment(lastTwoPoints[0], lastTwoPoints[1]);
+            }
+            
+            // Update the measurement preview
+            updateMeasurementPreview();
+        }
+        
+        // Create a measurement segment between two points
+        function createMeasurementSegment(start, end) {
+            // Create line geometry
+            const lineGeometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+            const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+            const line = new THREE.Line(lineGeometry, lineMaterial);
+            measurementGroup.add(line);
+            
+            // Calculate distance
+            const distance = start.distanceTo(end) * measurementState.globalScaleFactor;
+            
+            // Create distance label
+            const midpoint = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+            const label = createTextLabel(distance.toFixed(2), midpoint);
+            label.userData.start = start.clone();
+            label.userData.end = end.clone();
+            label.userData.originalDistance = start.distanceTo(end);
+            measurementGroup.add(label);
+            
+            // Store references
+            measurementState.currentLine = {
+                line: line,
+                labelObject: label
+            };
+            
+            // Add double-click listener for the label
+            label.userData.isLabel = true;
+            label.userData.index = measurementObjects.labels.length;
+            
+            // Store in measurement objects
+            measurementObjects.lines.push(line);
+            measurementObjects.labels.push(label);
+            
+            return line;
+        }
+        
+        // Create text label for measurements
+        function createTextLabel(text, position) {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 256;
+            canvas.height = 64;
+            
+            // Draw text on canvas
+            context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.font = '24px Arial';
+            context.fillStyle = 'white';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillText(text, canvas.width / 2, canvas.height / 2);
+            
+            // Create texture from canvas
+            const texture = new THREE.CanvasTexture(canvas);
+            
+            // Create sprite material using texture
+            const material = new THREE.SpriteMaterial({ map: texture });
+            const sprite = new THREE.Sprite(material);
+            sprite.position.copy(position);
+            sprite.scale.set(1, 0.25, 1);
+            
+            // Store text for later reference
+            sprite.userData.text = text;
+            
+            return sprite;
+        }
+        
+        // Update label text
+        function updateLabelText(label, text) {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 256;
+            canvas.height = 64;
+            
+            // Draw text on canvas
+            context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.font = '24px Arial';
+            context.fillStyle = 'white';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillText(text, canvas.width / 2, canvas.height / 2);
+            
+            // Update texture
+            label.material.map.dispose();
+            label.material.map = new THREE.CanvasTexture(canvas);
+            label.material.needsUpdate = true;
+            
+            // Store new text
+            label.userData.text = text;
+        }
+        
+        // Update the measurement preview line
+        function updateMeasurementPreview() {
+            if (!measurementState.measuring || measurementState.points.length === 0) return;
+            
+            // Raycast to find cursor position in 3D space
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(scene.children, true);
+            
+            if (intersects.length > 0) {
+                // Update preview point
+                let previewPoint = intersects[0].point.clone();
+                const lastPoint = measurementState.points[measurementState.points.length - 1];
+                
+                // Apply axis snapping if active
+                if (measurementState.snapAxis) {
+                    if (measurementState.snapAxis === 'x') {
+                        previewPoint.y = lastPoint.y;
+                        previewPoint.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'y') {
+                        previewPoint.x = lastPoint.x;
+                        previewPoint.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'z') {
+                        previewPoint.x = lastPoint.x;
+                        previewPoint.y = lastPoint.y;
+                    }
+                }
+                
+                measurementState.previewPoint = previewPoint;
+                
+                // Create or update preview line
+                if (!measurementState.previewLine) {
+                    const lineGeometry = new THREE.BufferGeometry().setFromPoints([lastPoint, previewPoint]);
+                    const lineMaterial = new THREE.LineDashedMaterial({ 
+                        color: 0xffffff,
+                        dashSize: 0.2,
+                        gapSize: 0.1
+                    });
+                    measurementState.previewLine = new THREE.Line(lineGeometry, lineMaterial);
+                    measurementState.previewLine.computeLineDistances();
+                    measurementGroup.add(measurementState.previewLine);
+                } else {
+                    // Update existing preview line
+                    const points = [lastPoint, previewPoint];
+                    measurementState.previewLine.geometry.dispose();
+                    measurementState.previewLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
+                    measurementState.previewLine.computeLineDistances();
+                }
+                
+                // Update preview label
+                const distance = lastPoint.distanceTo(previewPoint) * measurementState.globalScaleFactor;
+                const midpoint = new THREE.Vector3().addVectors(lastPoint, previewPoint).multiplyScalar(0.5);
+                
+                if (!measurementState.previewLabel) {
+                    measurementState.previewLabel = createTextLabel(distance.toFixed(2), midpoint);
+                    measurementGroup.add(measurementState.previewLabel);
+                } else {
+                    updateLabelText(measurementState.previewLabel, distance.toFixed(2));
+                    measurementState.previewLabel.position.copy(midpoint);
+                }
+            }
+        }
+        
+        // Complete the current measurement
+        function completeMeasurement() {
+            if (measurementState.points.length < 2) {
+                cancelCurrentMeasurement();
+                return;
+            }
+            
+            // Remove preview objects
+            if (measurementState.previewLine) {
+                measurementGroup.remove(measurementState.previewLine);
+                measurementState.previewLine.geometry.dispose();
+                measurementState.previewLine = null;
+            }
+            
+            if (measurementState.previewLabel) {
+                measurementGroup.remove(measurementState.previewLabel);
+                measurementState.previewLabel.material.dispose();
+                measurementState.previewLabel = null;
+            }
+            
+            // Store the reference points
+            for (let i = 0; i < measurementState.points.length; i++) {
+                const point = measurementState.points[i];
+                const existingPoint = measurementObjects.points.find(p => 
+                    p.position.distanceTo(point) < 0.001
+                );
+                
+                if (!existingPoint) {
+                    const pointGeometry = new THREE.SphereGeometry(0.05, 8, 8);
+                    const pointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+                    const pointObject = new THREE.Mesh(pointGeometry, pointMaterial);
+                    pointObject.position.copy(point);
+                    measurementGroup.add(pointObject);
+                    measurementObjects.points.push(pointObject);
+                }
+            }
+            
+            // Add total measurement label if more than 2 points
+            if (measurementState.points.length > 2) {
+                let totalDistance = 0;
+                
+                for (let i = 1; i < measurementState.points.length; i++) {
+                    totalDistance += measurementState.points[i-1].distanceTo(measurementState.points[i]);
+                }
+                
+                totalDistance *= measurementState.globalScaleFactor;
+                
+                // Calculate center position for total label
+                const midIndex = Math.floor(measurementState.points.length / 2);
+                const centerPosition = measurementState.points[midIndex].clone();
+                
+                // Add a small offset to avoid overlap
+                centerPosition.y += 0.2;
+                
+                const totalLabel = createTextLabel(`Total: ${totalDistance.toFixed(2)}`, centerPosition);
+                totalLabel.userData.isTotal = true;
+                totalLabel.scale.set(1.5, 0.4, 1);
+                measurementGroup.add(totalLabel);
+                measurementObjects.labels.push(totalLabel);
+            }
+            
+            // Reset measurement state
+            measurementState.points = [];
+            measurementState.measuring = false;
+            
+            // Start a new measurement
+            startNewMeasurement();
+        }
+        
+        // Remove the last point from the current measurement
+        function removeLastMeasurementPoint() {
+            if (measurementState.points.length <= 0) return;
+            
+            // Remove the last point
+            measurementState.points.pop();
+            
+            // If we have a line, remove the last segment
+            if (measurementState.currentLine && measurementState.points.length > 0) {
+                measurementGroup.remove(measurementState.currentLine.line);
+                measurementGroup.remove(measurementState.currentLine.labelObject);
+                
+                // Remove from stored arrays
+                const lineIndex = measurementObjects.lines.indexOf(measurementState.currentLine.line);
+                if (lineIndex !== -1) measurementObjects.lines.splice(lineIndex, 1);
+                
+                const labelIndex = measurementObjects.labels.indexOf(measurementState.currentLine.labelObject);
+                if (labelIndex !== -1) measurementObjects.labels.splice(labelIndex, 1);
+                
+                // Dispose resources
+                measurementState.currentLine.line.geometry.dispose();
+                measurementState.currentLine.labelObject.material.dispose();
+                
+                // Set current line to previous one
+                if (measurementState.points.length > 1) {
+                    const prevPoints = measurementState.points.slice(-2);
+                    measurementState.currentLine = {
+                        line: measurementObjects.lines[measurementObjects.lines.length - 1],
+                        labelObject: measurementObjects.labels[measurementObjects.labels.length - 1]
+                    };
+                } else {
+                    measurementState.currentLine = null;
+                }
+            }
+            
+            // Update preview
+            updateMeasurementPreview();
+        }
+        
+        // Start a new measurement
+        function startNewMeasurement() {
+            measurementState.measuring = true;
+            measurementState.points = [];
+            measurementState.previewPoint = new THREE.Vector3();
+            measurementState.currentLine = null;
+            measurementState.snapAxis = null;
+            
+            // Clean up any existing preview objects
+            if (measurementState.previewLine) {
+                measurementGroup.remove(measurementState.previewLine);
+                measurementState.previewLine.geometry.dispose();
+                measurementState.previewLine = null;
+            }
+            
+            if (measurementState.previewLabel) {
+                measurementGroup.remove(measurementState.previewLabel);
+                measurementState.previewLabel.material.dispose();
+                measurementState.previewLabel = null;
+            }
+        }
+        
+        // Cancel the current measurement
+        function cancelCurrentMeasurement() {
+            // Clean up any existing preview objects
+            if (measurementState.previewLine) {
+                measurementGroup.remove(measurementState.previewLine);
+                measurementState.previewLine.geometry.dispose();
+                measurementState.previewLine = null;
+            }
+            
+            if (measurementState.previewLabel) {
+                measurementGroup.remove(measurementState.previewLabel);
+                measurementState.previewLabel.material.dispose();
+                measurementState.previewLabel = null;
+            }
+            
+            // Reset measurement state
+            measurementState.measuring = false;
+            measurementState.points = [];
+            measurementState.currentLine = null;
+            measurementState.snapAxis = null;
+        }
+        
+        // Clear all reference points
+        function clearReferencePoints() {
+            // Remove all point objects
+            measurementObjects.points.forEach(point => {
+                measurementGroup.remove(point);
+                point.geometry.dispose();
+                point.material.dispose();
+            });
+            
+            measurementObjects.points = [];
+        }
+        
+        // Clear all measurements
+        function clearAllMeasurements() {
+            // Remove all line objects
+            measurementObjects.lines.forEach(line => {
+                measurementGroup.remove(line);
+                line.geometry.dispose();
+                line.material.dispose();
+            });
+            
+            // Remove all label objects
+            measurementObjects.labels.forEach(label => {
+                measurementGroup.remove(label);
+                label.material.dispose();
+            });
+            
+            measurementObjects.lines = [];
+            measurementObjects.labels = [];
+            
+            // Cancel any in-progress measurement
+            cancelCurrentMeasurement();
+        }
+        
+        // Handle double-click on labels for editing
+        document.addEventListener('dblclick', (event) => {
+            if (!measurementState.active) return;
+            
+            // Convert mouse coordinates for raycasting
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            // Raycast to find intersections
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(measurementObjects.labels, true);
+            
+            if (intersects.length > 0) {
+                const label = intersects[0].object;
+                
+                // Skip total labels
+                if (label.userData.isTotal) return;
+                
+                // Prompt for new value
+                const newValue = prompt('Enter reference measurement value:', label.userData.text);
+                
+                if (newValue !== null && !isNaN(parseFloat(newValue))) {
+                    // Calculate new scale factor based on this reference
+                    const originalDistance = label.userData.originalDistance;
+                    measurementState.globalScaleFactor = parseFloat(newValue) / originalDistance;
+                    
+                    // Update all measurement labels
+                    updateAllMeasurementLabels();
+                }
+            }
+        });
+        
+        // Update all measurement labels with the current scale factor
+        function updateAllMeasurementLabels() {
+            // Update regular segment labels
+            measurementObjects.labels.forEach(label => {
+                if (label.userData.isTotal) {
+                    // Handle total labels differently
+                    return;
+                }
+                
+                if (label.userData.start && label.userData.end) {
+                    const distance = label.userData.originalDistance * measurementState.globalScaleFactor;
+                    updateLabelText(label, distance.toFixed(2));
+                }
+            });
+            
+            // Update total labels (need to recalculate from segments)
+            const totalLabels = measurementObjects.labels.filter(l => l.userData.isTotal);
+            
+            // Group measurements based on connected segments
+            const processedLines = new Set();
+            const measurementGroups = [];
+            
+            for (let i = 0; i < measurementObjects.lines.length; i++) {
+                if (processedLines.has(i)) continue;
+                
+                const group = [];
+                const queue = [i];
+                
+                while (queue.length > 0) {
+                    const lineIndex = queue.shift();
+                    if (processedLines.has(lineIndex)) continue;
+                    
+                    processedLines.add(lineIndex);
+                    const line = measurementObjects.lines[lineIndex];
+                    group.push(line);
+                    
+                    // Find connected lines
+                    for (let j = 0; j < measurementObjects.lines.length; j++) {
+                        if (processedLines.has(j)) continue;
+                        
+                        const otherLine = measurementObjects.lines[j];
+                        const connected = linesAreConnected(line, otherLine);
+                        
+                        if (connected) queue.push(j);
+                    }
+                }
+                
+                if (group.length > 0) measurementGroups.push(group);
+            }
+            
+            // Update each total label
+            totalLabels.forEach((totalLabel, index) => {
+                if (index < measurementGroups.length) {
+                    const lines = measurementGroups[index];
+                    let totalDistance = 0;
+                    
+                    lines.forEach(line => {
+                        // Get positions from line geometry
+                        const positions = line.geometry.attributes.position.array;
+                        const start = new THREE.Vector3(positions[0], positions[1], positions[2]);
+                        const end = new THREE.Vector3(positions[3], positions[4], positions[5]);
+                        totalDistance += start.distanceTo(end);
+                    });
+                    
+                    totalDistance *= measurementState.globalScaleFactor;
+                    updateLabelText(totalLabel, `Total: ${totalDistance.toFixed(2)}`);
+                }
+            });
+        }
+        
+        // Check if two lines are connected (share a vertex)
+        function linesAreConnected(line1, line2) {
+            const pos1 = line1.geometry.attributes.position.array;
+            const pos2 = line2.geometry.attributes.position.array;
+            
+            const line1Start = new THREE.Vector3(pos1[0], pos1[1], pos1[2]);
+            const line1End = new THREE.Vector3(pos1[3], pos1[4], pos1[5]);
+            const line2Start = new THREE.Vector3(pos2[0], pos2[1], pos2[2]);
+            const line2End = new THREE.Vector3(pos2[3], pos2[4], pos2[5]);
+            
+            const threshold = 0.001;
+            
+            return (
+                line1Start.distanceToSquared(line2Start) < threshold ||
+                line1Start.distanceToSquared(line2End) < threshold ||
+                line1End.distanceToSquared(line2Start) < threshold ||
+                line1End.distanceToSquared(line2End) < threshold
+            );
         }
         
         // Update camera position based on pivot position and rotation
@@ -201,6 +885,12 @@
         function animate() {
             requestAnimationFrame(animate);
             if (isPointerLocked) update(clock.getDelta());
+            
+            // Update measurement preview if active
+            if (measurementState.measuring) {
+                updateMeasurementPreview();
+            }
+            
             renderer.render(scene, camera);
         }
         
