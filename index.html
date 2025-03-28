@@ -414,6 +414,7 @@
             const pointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
             const pointObject = new THREE.Mesh(pointGeometry, pointMaterial);
             pointObject.position.copy(position);
+            pointObject.userData.isReferencePoint = true; // Tag as reference point
             measurementGroup.add(pointObject);
             
             if (measurementState.points.length > 1) {
@@ -687,6 +688,7 @@
                     const pointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
                     const pointObject = new THREE.Mesh(pointGeometry, pointMaterial);
                     pointObject.position.copy(point);
+                    pointObject.userData.isReferencePoint = true; // Tag as reference point
                     measurementGroup.add(pointObject);
                     measurementObjects.points.push(pointObject);
                 }
@@ -798,13 +800,32 @@
         
         // Clear all reference points
         function clearReferencePoints() {
+            // Clear reference points tracked in measurementObjects.points
             measurementObjects.points.forEach(point => {
                 measurementGroup.remove(point);
                 point.geometry.dispose();
                 point.material.dispose();
             });
             
+            // Find and clear all sphere meshes in measurementGroup that might be reference points
+            measurementGroup.children.slice().forEach(child => {
+                if (child.userData.isReferencePoint || 
+                    (child.isMesh && child.geometry.type === 'SphereGeometry' && 
+                     child.material.color.getHex() === 0xffffff)) {
+                    measurementGroup.remove(child);
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                }
+            });
+            
+            // Reset the array
             measurementObjects.points = [];
+            
+            // If we're currently measuring, restart the measurement to prevent errors
+            if (measurementState.points.length > 0) {
+                cancelCurrentMeasurement();
+                startNewMeasurement();
+            }
         }
         
         // Clear all measurements
