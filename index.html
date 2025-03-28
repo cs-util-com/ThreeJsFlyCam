@@ -242,7 +242,6 @@
 
 
         // --- Update Logic ---
-        // CORRECTED SECTION: Removed negations for movement state scaling
         function update(deltaTime) {
             const currentSpeed = movementState.shift ? boostMoveSpeed : normalMoveSpeed;
             const moveDelta = currentSpeed * deltaTime;
@@ -253,12 +252,10 @@
             tempMoveVector.set(0, 0, 0);
 
             if (movementState.forward !== 0) {
-                // Corrected: No longer negating movementState.forward
                 tempMoveVector.addScaledVector(tempCameraDirection, movementState.forward);
             }
             if (movementState.right !== 0) {
-                 // Corrected: No longer negating movementState.right
-                tempMoveVector.addScaledVector(tempRightDirection, movementState.right);
+                tempMoveVector.addScaledVector(tempRightDirection, -movementState.right);
             }
 
              if (tempMoveVector.lengthSq() > 1e-6) {
