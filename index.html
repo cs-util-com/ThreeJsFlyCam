@@ -55,7 +55,7 @@
         // --- Configuration Constants ---
         const initialCameraDistance = 10;   // meters
         const normalMoveSpeed = 1.0;      // meters/second
-        const boostMoveSpeed = 5.0;       // meters/second (Increased from 2 for better feel)
+        const boostMoveSpeed = 5.0;       // meters/second
         const mouseSensitivity = 0.002;   // radians/pixel delta
         const crosshairSize = 2;        // pixels (Reflected in CSS)
         const verticalRotationLimit = Math.PI / 2 - 0.01; // Radians (~ +/- 89.9 deg)
@@ -72,12 +72,18 @@
         };
 
         // Rotation State
-        let pitch = 0; // Vertical angle
-        let yaw = 0;   // Horizontal angle
+        let pitch = 0; // Vertical angle (relative to horizontal)
+        let yaw = 0;   // Horizontal angle (around world Y axis)
         let isPointerLocked = false;
 
         const crosshairElement = document.getElementById('crosshair');
         const instructionsElement = document.getElementById('instructions');
+
+        // Temporary vectors for calculations
+        const tempCameraDirection = new THREE.Vector3();
+        const tempRightDirection = new THREE.Vector3();
+        const tempMoveVector = new THREE.Vector3();
+        const worldUp = new THREE.Vector3(0, 1, 0);
 
         // --- Initialization ---
         function init() {
@@ -90,7 +96,6 @@
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
-            // renderer.shadowMap.enabled = true; // Enable if using lights/shadows
             document.body.appendChild(renderer.domElement);
 
             // Camera
@@ -101,8 +106,8 @@
             pivot.position.set(0, 1.7, 0); // Start slightly above ground
             scene.add(pivot);
 
-            // Set initial camera position relative to pivot
-            updateCameraPosition();
+            // Set initial camera position relative to pivot based on initial pitch/yaw
+            updateCameraPosition(); // Will calculate initial position based on pitch=0, yaw=0
             camera.lookAt(pivot.position);
 
             // --- Scene Content ---
@@ -111,7 +116,6 @@
             const groundMat = new THREE.MeshStandardMaterial({ color: 0x228B22, side: THREE.DoubleSide }); // Forest green
             const ground = new THREE.Mesh(groundGeo, groundMat);
             ground.rotation.x = -Math.PI / 2;
-            // ground.receiveShadow = true;
             scene.add(ground);
 
             // Simple Shapes
@@ -125,17 +129,14 @@
 
             const box = new THREE.Mesh(boxGeo, mat1);
             box.position.set(10, 1, 0);
-            // box.castShadow = true;
             scene.add(box);
 
             const sphere = new THREE.Mesh(sphereGeo, mat2);
             sphere.position.set(-8, 1.5, -5);
-            // sphere.castShadow = true;
             scene.add(sphere);
 
             const cone = new THREE.Mesh(coneGeo, mat3);
             cone.position.set(0, 1.5, -12);
-            // cone.castShadow = true;
             scene.add(cone);
 
             // --- Lighting ---
@@ -144,10 +145,7 @@
 
             const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
             directionalLight.position.set(10, 20, 5);
-            // directionalLight.castShadow = true;
-            // Configure shadow properties if needed
             scene.add(directionalLight);
-
 
             // --- Event Listeners ---
             window.addEventListener('resize', onWindowResize);
@@ -157,7 +155,9 @@
             document.addEventListener('pointerlockchange', onPointerLockChange);
             document.addEventListener('pointerlockerror', onPointerLockError);
             renderer.domElement.addEventListener('click', () => {
-                renderer.domElement.requestPointerLock();
+                if (!isPointerLocked) {
+                    renderer.domElement.requestPointerLock();
+                }
             });
 
             // Start Animation Loop
@@ -174,51 +174,21 @@
         function onKeyDown(event) {
             if (!isPointerLocked) return;
             switch (event.code) {
-                case 'KeyW':
-                case 'ArrowUp':
-                    movementState.forward = 1;
-                    break;
-                case 'KeyS':
-                case 'ArrowDown':
-                    movementState.forward = -1;
-                    break;
-                case 'KeyA':
-                case 'ArrowLeft':
-                    movementState.right = -1;
-                    break;
-                case 'KeyD':
-                case 'ArrowRight':
-                    movementState.right = 1;
-                    break;
-                case 'ShiftLeft':
-                case 'ShiftRight':
-                    movementState.shift = true;
-                    break;
+                case 'KeyW': case 'ArrowUp':    movementState.forward = 1; break;
+                case 'KeyS': case 'ArrowDown':  movementState.forward = -1; break;
+                case 'KeyA': case 'ArrowLeft':  movementState.right = -1; break;
+                case 'KeyD': case 'ArrowRight': movementState.right = 1; break;
+                case 'ShiftLeft': case 'ShiftRight': movementState.shift = true; break;
             }
         }
 
         function onKeyUp(event) {
             switch (event.code) {
-                case 'KeyW':
-                case 'ArrowUp':
-                    if (movementState.forward === 1) movementState.forward = 0;
-                    break;
-                case 'KeyS':
-                case 'ArrowDown':
-                    if (movementState.forward === -1) movementState.forward = 0;
-                    break;
-                case 'KeyA':
-                case 'ArrowLeft':
-                    if (movementState.right === -1) movementState.right = 0;
-                    break;
-                case 'KeyD':
-                case 'ArrowRight':
-                    if (movementState.right === 1) movementState.right = 0;
-                    break;
-                case 'ShiftLeft':
-                case 'ShiftRight':
-                    movementState.shift = false;
-                    break;
+                case 'KeyW': case 'ArrowUp':    if (movementState.forward === 1) movementState.forward = 0; break;
+                case 'KeyS': case 'ArrowDown':  if (movementState.forward === -1) movementState.forward = 0; break;
+                case 'KeyA': case 'ArrowLeft':  if (movementState.right === -1) movementState.right = 0; break;
+                case 'KeyD': case 'ArrowRight': if (movementState.right === 1) movementState.right = 0; break;
+                case 'ShiftLeft': case 'ShiftRight': movementState.shift = false; break;
             }
         }
 
@@ -228,17 +198,15 @@
             const deltaX = event.movementX || 0;
             const deltaY = event.movementY || 0;
 
-            // Update Yaw (horizontal rotation) - Rotate the pivot itself
+            // Update Yaw (horizontal rotation)
             yaw -= deltaX * mouseSensitivity;
 
             // Update Pitch (vertical rotation) - Clamp vertical angle
             pitch -= deltaY * mouseSensitivity;
             pitch = Math.max(-verticalRotationLimit, Math.min(verticalRotationLimit, pitch));
 
-            // Apply yaw rotation to the pivot object directly
-            pivot.rotation.y = yaw;
-
-            // Camera position is updated relative to the pivot in the update loop
+            // We don't directly rotate the pivot anymore with mouse look.
+            // Pivot position changes via movement, camera position/rotation calculated from pitch/yaw.
         }
 
         function onPointerLockChange() {
@@ -266,23 +234,30 @@
 
         // --- Update Camera Position relative to Pivot ---
         function updateCameraPosition() {
-            // Calculate offset based on pitch and distance
-            const offset = new THREE.Vector3(0, 0, initialCameraDistance); // Start behind pivot
+            // Start with offset directly behind the pivot *along the negative Z axis in pivot space*
+            const offset = new THREE.Vector3(0, 0, initialCameraDistance);
 
-            // Apply pitch rotation (around pivot's local X-axis)
-            // We use a Quaternion to rotate the offset vector
-            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
-            offset.applyQuaternion(pitchQuat);
+            // Create a quaternion representing the camera's orientation based on pitch and yaw
+            // Apply yaw first (around world Y), then pitch (around camera's local X)
+            const quaternion = new THREE.Quaternion();
+            const yawQuaternion = new THREE.Quaternion().setFromAxisAngle(worldUp, yaw);
+            const pitchQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
 
-            // Apply yaw rotation (around pivot's local Y-axis - pivot already rotated)
-            // Now transform the offset to world space based on the pivot's rotation
-             offset.applyQuaternion(pivot.quaternion);
+            // Combine rotations: apply pitch relative to the yawed orientation
+            quaternion.multiplyQuaternions(yawQuaternion, pitchQuaternion);
 
-            // Set camera position
+            // Rotate the offset vector by the combined quaternion
+            offset.applyQuaternion(quaternion);
+
+            // Calculate final camera position by adding the rotated offset to the pivot position
             camera.position.copy(pivot.position).add(offset);
 
-            // Ensure camera looks at the pivot
-            camera.lookAt(pivot.position);
+            // Set camera rotation using the same quaternion
+            camera.quaternion.copy(quaternion);
+
+             // Ensure camera looks forward along its orientation, not necessarily AT the pivot anymore
+             // This allows the pivot to be the center of *movement* but not strictly the look-at target
+             // camera.lookAt(pivot.position); // We remove this line
         }
 
 
@@ -291,19 +266,35 @@
             const currentSpeed = movementState.shift ? boostMoveSpeed : normalMoveSpeed;
             const moveDelta = currentSpeed * deltaTime;
 
-            // Get pivot's forward and right directions (based on its Y rotation)
-            const forward = new THREE.Vector3();
-            pivot.getWorldDirection(forward); // Pivot's forward direction
-            const right = new THREE.Vector3().crossVectors(pivot.up, forward).normalize(); // Pivot's right
+            // --- Calculate Movement Directions ---
+            // Forward/Backward based on Camera's actual direction
+            camera.getWorldDirection(tempCameraDirection); // Gets the vector the camera is looking along
 
-            // Calculate movement vector in world space
-            const moveVector = new THREE.Vector3();
-            moveVector.addScaledVector(forward, movementState.forward);
-            moveVector.addScaledVector(right, movementState.right);
-            moveVector.normalize(); // Ensure consistent speed diagonally
+            // Right/Left based on a horizontal plane (using world Up and camera direction)
+            // This ensures strafing is horizontal regardless of pitch
+            tempRightDirection.crossVectors(worldUp, tempCameraDirection).normalize(); // Calculate right vector relative to world vertical
 
-            // Apply movement to the pivot
-            pivot.position.addScaledVector(moveVector, moveDelta);
+            // --- Calculate Final Movement Vector ---
+            tempMoveVector.set(0, 0, 0); // Reset move vector
+
+            // Add forward/backward component (use NEGATED camera direction)
+            if (movementState.forward !== 0) {
+                tempMoveVector.addScaledVector(tempCameraDirection, -movementState.forward); // Invert forward state
+            }
+            // Add right/left component
+            if (movementState.right !== 0) {
+                tempMoveVector.addScaledVector(tempRightDirection, -movementState.right); // Use calculated right vector, invert right state
+            }
+
+            // Normalize the final move vector ONLY if there's combined movement (diagonal)
+            // to ensure consistent speed. Check magnitude squared for efficiency.
+             if (tempMoveVector.lengthSq() > 0) { // Check if there is any movement input
+                 tempMoveVector.normalize();
+             }
+
+
+            // --- Apply Movement ---
+            pivot.position.addScaledVector(tempMoveVector, moveDelta);
 
             // Update camera position based on new pivot position and current pitch/yaw
             updateCameraPosition();
