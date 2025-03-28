@@ -14,7 +14,7 @@
         Mouse: Look<br/>
         ESC: Release Mouse<br/>
         Left-click: Place measurement point<br/>
-        Enter/R: Complete current measurement
+        Enter: Complete current measurement
     </div>
     <div id="crosshair" class="absolute top-1/2 left-1/2 w-0.5 h-0.5 bg-white rounded-full transform -translate-x-1/2 -translate-y-1/2 pointer-events-none hidden"></div>
     
@@ -28,7 +28,7 @@
         <strong>Measurement Controls</strong><br/>
         Left-click: Place point<br/>
         Arrow keys: Snap to axis<br/>
-        Backspace: Remove last point<br/>
+        Backspace/Del: Remove last point<br/>
         Enter/R: Complete measurement<br/>
         Double-click label: Edit reference
     </div>
@@ -223,8 +223,8 @@
                     return;
                 }
 
-                // Handle R/Enter
-                if (event.code === 'KeyR' || event.code === 'Enter') {
+                // Handle Enter
+                if (event.code === 'Enter') {
                     if (measurementState.points.length > 0) {
                         if (measurementState.points.length >= 2) {
                             completeMeasurement();
