@@ -86,6 +86,8 @@
             labels: []
         };
         const raycaster = new THREE.Raycaster();
+        // Set minimum distance to a very small value to detect nearby objects
+        raycaster.near = 0.01;
         const centerScreen = new THREE.Vector2(0, 0); // Center of screen for raycasting
         let measurementGroup;
 
@@ -309,8 +311,9 @@
                 // Use existing reference point
                 addMeasurementPoint(measurementObjects.points[existingPointIndex].position.clone());
             } else {
-                // Check for intersections with scene objects
-                const intersects = raycaster.intersectObjects(scene.children, true);
+                // Check for intersections with all scene objects (excluding measurement objects)
+                const sceneObjects = scene.children.filter(child => child !== measurementGroup);
+                const intersects = raycaster.intersectObjects(sceneObjects, true);
                 
                 if (intersects.length > 0) {
                     // Use the first intersection point
@@ -452,11 +455,69 @@
             if (measurementState.points.length === 0) return;
             
             raycaster.setFromCamera(centerScreen, camera);
-            const intersects = raycaster.intersectObjects(scene.children, true);
+            
+            // First try to hit actual scene objects (excluding measurement elements)
+            const sceneObjects = scene.children.filter(child => child !== measurementGroup);
+            let intersects = raycaster.intersectObjects(sceneObjects, true);
+            
+            // If no scene objects were hit, try to hit measurement points
+            if (intersects.length === 0) {
+                intersects = raycaster.intersectObjects(measurementObjects.points, false);
+            }
             
             if (intersects.length > 0) {
                 let previewPoint = intersects[0].point.clone();
                 const lastPoint = measurementState.points[measurementState.points.length - 1];
+                
+                if (measurementState.snapAxis) {
+                    if (measurementState.snapAxis === 'x') {
+                        previewPoint.y = lastPoint.y;
+                        previewPoint.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'y') {
+                        previewPoint.x = lastPoint.x;
+                        previewPoint.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'z') {
+                        previewPoint.x = lastPoint.x;
+                        previewPoint.y = lastPoint.y;
+                    }
+                }
+                
+                measurementState.previewPoint = previewPoint;
+                
+                if (!measurementState.previewLine) {
+                    const lineGeometry = new THREE.BufferGeometry().setFromPoints([lastPoint, previewPoint]);
+                    const lineMaterial = new THREE.LineDashedMaterial({ 
+                        color: 0xffffff,
+                        dashSize: 0.2,
+                        gapSize: 0.1
+                    });
+                    measurementState.previewLine = new THREE.Line(lineGeometry, lineMaterial);
+                    measurementState.previewLine.computeLineDistances();
+                    measurementGroup.add(measurementState.previewLine);
+                } else {
+                    const points = [lastPoint, previewPoint];
+                    measurementState.previewLine.geometry.dispose();
+                    measurementState.previewLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
+                    measurementState.previewLine.computeLineDistances();
+                }
+                
+                const distance = lastPoint.distanceTo(previewPoint) * measurementState.globalScaleFactor;
+                const midpoint = new THREE.Vector3().addVectors(lastPoint, previewPoint).multiplyScalar(0.5);
+                
+                if (!measurementState.previewLabel) {
+                    measurementState.previewLabel = createTextLabel(distance.toFixed(2), midpoint);
+                    measurementGroup.add(measurementState.previewLabel);
+                } else {
+                    updateLabelText(measurementState.previewLabel, distance.toFixed(2));
+                    measurementState.previewLabel.position.copy(midpoint);
+                }
+            } else {
+                // If no intersection, use camera direction to create a point at a reasonable distance
+                const direction = new THREE.Vector3();
+                camera.getWorldDirection(direction);
+                
+                const lastPoint = measurementState.points[measurementState.points.length - 1];
+                const previewPoint = lastPoint.clone().add(direction.multiplyScalar(5));
                 
                 if (measurementState.snapAxis) {
                     if (measurementState.snapAxis === 'x') {
