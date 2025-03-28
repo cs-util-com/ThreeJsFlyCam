@@ -12,24 +12,24 @@
         WASD: Move<br/>
         Shift: Speed Boost<br/>
         Mouse: Look<br/>
-        ESC: Release Mouse
+        ESC: Release Mouse<br/>
+        Left-click: Place measurement point<br/>
+        Enter/R: Complete current measurement
     </div>
     <div id="crosshair" class="absolute top-1/2 left-1/2 w-0.5 h-0.5 bg-white rounded-full transform -translate-x-1/2 -translate-y-1/2 pointer-events-none hidden"></div>
     
     <!-- Measurement Tool UI -->
     <div id="measurement-controls" class="absolute bottom-2.5 left-2.5 text-white font-sans flex gap-2">
-        <button id="toggleMeasure" class="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded">Measure</button>
         <button id="clearPoints" class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded">Clear Reference Points</button>
         <button id="clearMeasurements" class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded">Clear Measurements</button>
     </div>
     
-    <div id="measurement-instructions" class="absolute top-2.5 right-2.5 text-white font-sans bg-black bg-opacity-50 p-2.5 rounded hidden">
-        <strong>Measurement Tool</strong><br/>
-        Click: Place point<br/>
-        Move mouse: Preview line<br/>
+    <div id="measurement-instructions" class="absolute top-2.5 right-2.5 text-white font-sans bg-black bg-opacity-50 p-2.5 rounded">
+        <strong>Measurement Controls</strong><br/>
+        Left-click: Place point<br/>
         Arrow keys: Snap to axis<br/>
-        Delete: Remove last point<br/>
-        Esc: Complete measurement<br/>
+        Backspace: Remove last point<br/>
+        Enter/R: Complete measurement<br/>
         Double-click label: Edit reference
     </div>
 
@@ -71,13 +71,14 @@
 
         // --- Measurement Tool Variables ---
         const measurementState = {
-            active: false,
+            active: true, // Always active
             measuring: false,
             points: [],
             previewPoint: new THREE.Vector3(),
             currentLine: null,
             snapAxis: null,
-            globalScaleFactor: 1.0
+            globalScaleFactor: 1.0,
+            lastClickTime: 0
         };
         const measurementObjects = {
             lines: [],
@@ -85,12 +86,11 @@
             labels: []
         };
         const raycaster = new THREE.Raycaster();
-        const mouse = new THREE.Vector2();
+        const centerScreen = new THREE.Vector2(0, 0); // Center of screen for raycasting
         let measurementGroup;
 
         // Create all mesh objects from configuration array
         function createObjects() {
-            // Format: [geometry, color, position, optional rotation]
             const objects = [
                 [new THREE.BoxGeometry(2, 2, 2), 0xff0000, [10, 1, 0]],
                 [new THREE.SphereGeometry(1.5, 32, 16), 0x0000ff, [-8, 1.5, -5]],
@@ -145,6 +145,10 @@
             createObjects();
             setupEventListeners();
             setupMeasurementTools();
+            
+            // Show measurement instructions by default
+            elements.measurementInstructions.classList.remove('hidden');
+            
             requestAnimationFrame(animate);
         }
         
@@ -168,19 +172,48 @@
             };
             
             document.addEventListener('keydown', (event) => {
-                if (measurementState.measuring) {
-                    handleMeasurementKeydown(event);
-                    return;
+                // Handle measurement-specific keys
+                if (isPointerLocked) {
+                    if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
+                        measurementState.snapAxis = 'y';
+                        event.preventDefault();
+                        return;
+                    } else if (event.code === 'ArrowLeft') {
+                        measurementState.snapAxis = 'x';
+                        event.preventDefault();
+                        return;
+                    } else if (event.code === 'ArrowRight') {
+                        measurementState.snapAxis = 'z';
+                        event.preventDefault();
+                        return;
+                    } else if (event.code === 'Backspace' || event.code === 'Delete') {
+                        // Remove last point
+                        if (measurementState.points.length > 0) {
+                            removeLastMeasurementPoint();
+                        }
+                        event.preventDefault();
+                        return;
+                    } else if (event.code === 'KeyR' || event.code === 'Enter') {
+                        // Complete current measurement
+                        if (measurementState.points.length > 0) {
+                            if (measurementState.points.length >= 2) {
+                                completeMeasurement();
+                            } else {
+                                cancelCurrentMeasurement();
+                            }
+                        }
+                        event.preventDefault();
+                        return;
+                    }
                 }
                 
+                // Handle movement keys
                 if (!isPointerLocked || !keyMap[event.code]) return;
                 const [property, value] = keyMap[event.code];
                 movementState[property] = value;
             });
             
             document.addEventListener('keyup', (event) => {
-                if (measurementState.measuring) return;
-                
                 if (!keyMap[event.code]) return;
                 const [property, value] = keyMap[event.code];
                 if (property === 'shift' || movementState[property] === value) {
@@ -190,15 +223,6 @@
             
             // Mouse and pointer lock
             document.addEventListener('mousemove', (event) => {
-                // Update mouse position for raycasting
-                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-                
-                if (measurementState.measuring) {
-                    updateMeasurementPreview();
-                    return;
-                }
-                
                 if (!isPointerLocked) return;
                 yaw -= (event.movementX || 0) * config.mouseSensitivity;
                 pitch = THREE.MathUtils.clamp(
@@ -216,43 +240,42 @@
                 if (!isPointerLocked) Object.assign(movementState, {forward: 0, right: 0, shift: false});
             });
             
+            // Detect real clicks vs. drags
+            let dragStartTime = 0;
+            let isDragging = false;
+            
+            renderer.domElement.addEventListener('mousedown', () => {
+                dragStartTime = Date.now();
+                isDragging = false;
+            });
+            
+            renderer.domElement.addEventListener('mousemove', () => {
+                if (Date.now() - dragStartTime > 100) {
+                    isDragging = true;
+                }
+            });
+            
             renderer.domElement.addEventListener('click', (event) => {
-                if (measurementState.measuring) {
-                    handleMeasurementClick(event);
+                if (!isPointerLocked) {
+                    renderer.domElement.requestPointerLock();
                     return;
                 }
                 
-                if (!isPointerLocked) renderer.domElement.requestPointerLock();
+                // Only handle real clicks, not drags
+                if (!isDragging && Date.now() - measurementState.lastClickTime > 300) {
+                    measurementState.lastClickTime = Date.now();
+                    handleMeasurementClick();
+                }
+                
+                isDragging = false;
             });
         }
         
         // Setup measurement tool UI and events
         function setupMeasurementTools() {
             // Button elements
-            const toggleButton = document.getElementById('toggleMeasure');
             const clearPointsButton = document.getElementById('clearPoints');
             const clearMeasurementsButton = document.getElementById('clearMeasurements');
-            
-            // Toggle measurement mode
-            toggleButton.addEventListener('click', () => {
-                measurementState.active = !measurementState.active;
-                toggleButton.textContent = measurementState.active ? 'Exit Measure' : 'Measure';
-                toggleButton.classList.toggle('bg-blue-600', !measurementState.active);
-                toggleButton.classList.toggle('bg-green-600', measurementState.active);
-                
-                if (measurementState.active) {
-                    // Exit pointer lock if active
-                    if (isPointerLocked) document.exitPointerLock();
-                    // Show measurement instructions
-                    elements.measurementInstructions.classList.remove('hidden');
-                    startNewMeasurement();
-                } else {
-                    // Hide measurement instructions
-                    elements.measurementInstructions.classList.add('hidden');
-                    // Cancel any in-progress measurement
-                    cancelCurrentMeasurement();
-                }
-            });
             
             // Clear all reference points
             clearPointsButton.addEventListener('click', () => {
@@ -267,46 +290,17 @@
                     clearAllMeasurements();
                 }
             });
-        }
-        
-        // Handle measurement keydown events
-        function handleMeasurementKeydown(event) {
-            // Handle arrow keys for axis snapping
-            if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
-                measurementState.snapAxis = 'y';
-                event.preventDefault();
-            } else if (event.code === 'ArrowLeft') {
-                measurementState.snapAxis = 'x';
-                event.preventDefault();
-            } else if (event.code === 'ArrowRight') {
-                measurementState.snapAxis = 'z';
-                event.preventDefault();
-            } else if (event.code === 'Delete' || event.code === 'Backspace') {
-                // Remove last point
-                if (measurementState.points.length > 0) {
-                    removeLastMeasurementPoint();
-                }
-                event.preventDefault();
-            } else if (event.code === 'Escape') {
-                // Complete the measurement
-                if (measurementState.points.length >= 2) {
-                    completeMeasurement();
-                } else {
-                    cancelCurrentMeasurement();
-                }
-                event.preventDefault();
-            }
             
-            // Update preview with new snap settings
-            updateMeasurementPreview();
+            // Initialize the first measurement
+            startNewMeasurement();
         }
         
         // Handle click when in measurement mode
-        function handleMeasurementClick(event) {
-            if (!measurementState.measuring) return;
+        function handleMeasurementClick() {
+            if (!isPointerLocked) return;
             
-            // Perform raycasting to find intersections
-            raycaster.setFromCamera(mouse, camera);
+            // Perform raycasting from center of screen (crosshair position)
+            raycaster.setFromCamera(centerScreen, camera);
             
             // First check if we hit an existing reference point
             const existingPointIndex = checkHitReferencePoint();
@@ -347,56 +341,43 @@
         
         // Check if ray hits an existing reference point
         function checkHitReferencePoint() {
-            for (let i = 0; i < measurementObjects.points.length; i++) {
-                const pointObject = measurementObjects.points[i];
-                const pointPosition = pointObject.position.clone();
-                
-                // Convert point position to screen space
-                const screenPosition = pointPosition.clone().project(camera);
-                
-                // Check if mouse is close to this point (using a small threshold)
-                if (Math.abs(screenPosition.x - mouse.x) < 0.02 && 
-                    Math.abs(screenPosition.y - mouse.y) < 0.02) {
-                    return i;
-                }
+            // Use raycaster that's already set up with center screen position
+            const intersects = raycaster.intersectObjects(measurementObjects.points, false);
+            
+            // Only return a hit if we directly intersect with a reference point
+            if (intersects.length > 0) {
+                return measurementObjects.points.indexOf(intersects[0].object);
             }
+            
             return -1;
         }
         
         // Add a new measurement point
         function addMeasurementPoint(position) {
-            // Add point to the current measurement
             measurementState.points.push(position);
             
-            // Create a reference point (white dot)
             const pointGeometry = new THREE.SphereGeometry(0.05, 8, 8);
             const pointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
             const pointObject = new THREE.Mesh(pointGeometry, pointMaterial);
             pointObject.position.copy(position);
             measurementGroup.add(pointObject);
             
-            // If this is not the first point, create a line segment
             if (measurementState.points.length > 1) {
                 const lastTwoPoints = measurementState.points.slice(-2);
                 createMeasurementSegment(lastTwoPoints[0], lastTwoPoints[1]);
             }
             
-            // Update the measurement preview
             updateMeasurementPreview();
         }
         
         // Create a measurement segment between two points
         function createMeasurementSegment(start, end) {
-            // Create line geometry
             const lineGeometry = new THREE.BufferGeometry().setFromPoints([start, end]);
             const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
             const line = new THREE.Line(lineGeometry, lineMaterial);
             measurementGroup.add(line);
             
-            // Calculate distance
             const distance = start.distanceTo(end) * measurementState.globalScaleFactor;
-            
-            // Create distance label
             const midpoint = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
             const label = createTextLabel(distance.toFixed(2), midpoint);
             label.userData.start = start.clone();
@@ -404,17 +385,14 @@
             label.userData.originalDistance = start.distanceTo(end);
             measurementGroup.add(label);
             
-            // Store references
             measurementState.currentLine = {
                 line: line,
                 labelObject: label
             };
             
-            // Add double-click listener for the label
             label.userData.isLabel = true;
             label.userData.index = measurementObjects.labels.length;
             
-            // Store in measurement objects
             measurementObjects.lines.push(line);
             measurementObjects.labels.push(label);
             
@@ -428,7 +406,6 @@
             canvas.width = 256;
             canvas.height = 64;
             
-            // Draw text on canvas
             context.fillStyle = 'rgba(0, 0, 0, 0.7)';
             context.fillRect(0, 0, canvas.width, canvas.height);
             context.font = '24px Arial';
@@ -437,16 +414,12 @@
             context.textBaseline = 'middle';
             context.fillText(text, canvas.width / 2, canvas.height / 2);
             
-            // Create texture from canvas
             const texture = new THREE.CanvasTexture(canvas);
-            
-            // Create sprite material using texture
             const material = new THREE.SpriteMaterial({ map: texture });
             const sprite = new THREE.Sprite(material);
             sprite.position.copy(position);
             sprite.scale.set(1, 0.25, 1);
             
-            // Store text for later reference
             sprite.userData.text = text;
             
             return sprite;
@@ -459,7 +432,6 @@
             canvas.width = 256;
             canvas.height = 64;
             
-            // Draw text on canvas
             context.fillStyle = 'rgba(0, 0, 0, 0.7)';
             context.fillRect(0, 0, canvas.width, canvas.height);
             context.font = '24px Arial';
@@ -468,29 +440,24 @@
             context.textBaseline = 'middle';
             context.fillText(text, canvas.width / 2, canvas.height / 2);
             
-            // Update texture
             label.material.map.dispose();
             label.material.map = new THREE.CanvasTexture(canvas);
             label.material.needsUpdate = true;
             
-            // Store new text
             label.userData.text = text;
         }
         
         // Update the measurement preview line
         function updateMeasurementPreview() {
-            if (!measurementState.measuring || measurementState.points.length === 0) return;
+            if (measurementState.points.length === 0) return;
             
-            // Raycast to find cursor position in 3D space
-            raycaster.setFromCamera(mouse, camera);
+            raycaster.setFromCamera(centerScreen, camera);
             const intersects = raycaster.intersectObjects(scene.children, true);
             
             if (intersects.length > 0) {
-                // Update preview point
                 let previewPoint = intersects[0].point.clone();
                 const lastPoint = measurementState.points[measurementState.points.length - 1];
                 
-                // Apply axis snapping if active
                 if (measurementState.snapAxis) {
                     if (measurementState.snapAxis === 'x') {
                         previewPoint.y = lastPoint.y;
@@ -506,7 +473,6 @@
                 
                 measurementState.previewPoint = previewPoint;
                 
-                // Create or update preview line
                 if (!measurementState.previewLine) {
                     const lineGeometry = new THREE.BufferGeometry().setFromPoints([lastPoint, previewPoint]);
                     const lineMaterial = new THREE.LineDashedMaterial({ 
@@ -518,14 +484,12 @@
                     measurementState.previewLine.computeLineDistances();
                     measurementGroup.add(measurementState.previewLine);
                 } else {
-                    // Update existing preview line
                     const points = [lastPoint, previewPoint];
                     measurementState.previewLine.geometry.dispose();
                     measurementState.previewLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
                     measurementState.previewLine.computeLineDistances();
                 }
                 
-                // Update preview label
                 const distance = lastPoint.distanceTo(previewPoint) * measurementState.globalScaleFactor;
                 const midpoint = new THREE.Vector3().addVectors(lastPoint, previewPoint).multiplyScalar(0.5);
                 
@@ -546,7 +510,6 @@
                 return;
             }
             
-            // Remove preview objects
             if (measurementState.previewLine) {
                 measurementGroup.remove(measurementState.previewLine);
                 measurementState.previewLine.geometry.dispose();
@@ -559,7 +522,6 @@
                 measurementState.previewLabel = null;
             }
             
-            // Store the reference points
             for (let i = 0; i < measurementState.points.length; i++) {
                 const point = measurementState.points[i];
                 const existingPoint = measurementObjects.points.find(p => 
@@ -576,7 +538,6 @@
                 }
             }
             
-            // Add total measurement label if more than 2 points
             if (measurementState.points.length > 2) {
                 let totalDistance = 0;
                 
@@ -586,11 +547,8 @@
                 
                 totalDistance *= measurementState.globalScaleFactor;
                 
-                // Calculate center position for total label
                 const midIndex = Math.floor(measurementState.points.length / 2);
                 const centerPosition = measurementState.points[midIndex].clone();
-                
-                // Add a small offset to avoid overlap
                 centerPosition.y += 0.2;
                 
                 const totalLabel = createTextLabel(`Total: ${totalDistance.toFixed(2)}`, centerPosition);
@@ -600,11 +558,9 @@
                 measurementObjects.labels.push(totalLabel);
             }
             
-            // Reset measurement state
             measurementState.points = [];
             measurementState.measuring = false;
             
-            // Start a new measurement
             startNewMeasurement();
         }
         
@@ -612,26 +568,21 @@
         function removeLastMeasurementPoint() {
             if (measurementState.points.length <= 0) return;
             
-            // Remove the last point
             measurementState.points.pop();
             
-            // If we have a line, remove the last segment
             if (measurementState.currentLine && measurementState.points.length > 0) {
                 measurementGroup.remove(measurementState.currentLine.line);
                 measurementGroup.remove(measurementState.currentLine.labelObject);
                 
-                // Remove from stored arrays
                 const lineIndex = measurementObjects.lines.indexOf(measurementState.currentLine.line);
                 if (lineIndex !== -1) measurementObjects.lines.splice(lineIndex, 1);
                 
                 const labelIndex = measurementObjects.labels.indexOf(measurementState.currentLine.labelObject);
                 if (labelIndex !== -1) measurementObjects.labels.splice(labelIndex, 1);
                 
-                // Dispose resources
                 measurementState.currentLine.line.geometry.dispose();
                 measurementState.currentLine.labelObject.material.dispose();
                 
-                // Set current line to previous one
                 if (measurementState.points.length > 1) {
                     const prevPoints = measurementState.points.slice(-2);
                     measurementState.currentLine = {
@@ -643,7 +594,6 @@
                 }
             }
             
-            // Update preview
             updateMeasurementPreview();
         }
         
@@ -655,7 +605,6 @@
             measurementState.currentLine = null;
             measurementState.snapAxis = null;
             
-            // Clean up any existing preview objects
             if (measurementState.previewLine) {
                 measurementGroup.remove(measurementState.previewLine);
                 measurementState.previewLine.geometry.dispose();
@@ -671,7 +620,6 @@
         
         // Cancel the current measurement
         function cancelCurrentMeasurement() {
-            // Clean up any existing preview objects
             if (measurementState.previewLine) {
                 measurementGroup.remove(measurementState.previewLine);
                 measurementState.previewLine.geometry.dispose();
@@ -684,7 +632,6 @@
                 measurementState.previewLabel = null;
             }
             
-            // Reset measurement state
             measurementState.measuring = false;
             measurementState.points = [];
             measurementState.currentLine = null;
@@ -693,7 +640,6 @@
         
         // Clear all reference points
         function clearReferencePoints() {
-            // Remove all point objects
             measurementObjects.points.forEach(point => {
                 measurementGroup.remove(point);
                 point.geometry.dispose();
@@ -705,14 +651,12 @@
         
         // Clear all measurements
         function clearAllMeasurements() {
-            // Remove all line objects
             measurementObjects.lines.forEach(line => {
                 measurementGroup.remove(line);
                 line.geometry.dispose();
                 line.material.dispose();
             });
             
-            // Remove all label objects
             measurementObjects.labels.forEach(label => {
                 measurementGroup.remove(label);
                 label.material.dispose();
@@ -721,48 +665,41 @@
             measurementObjects.lines = [];
             measurementObjects.labels = [];
             
-            // Cancel any in-progress measurement
             cancelCurrentMeasurement();
         }
         
         // Handle double-click on labels for editing
         document.addEventListener('dblclick', (event) => {
-            if (!measurementState.active) return;
-            
-            // Convert mouse coordinates for raycasting
-            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-            
-            // Raycast to find intersections
-            raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(measurementObjects.labels, true);
-            
-            if (intersects.length > 0) {
-                const label = intersects[0].object;
+            if (!isPointerLocked) {
+                const mouse = new THREE.Vector2(
+                    (event.clientX / window.innerWidth) * 2 - 1,
+                    -(event.clientY / window.innerHeight) * 2 + 1
+                );
                 
-                // Skip total labels
-                if (label.userData.isTotal) return;
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObjects(measurementObjects.labels, true);
                 
-                // Prompt for new value
-                const newValue = prompt('Enter reference measurement value:', label.userData.text);
-                
-                if (newValue !== null && !isNaN(parseFloat(newValue))) {
-                    // Calculate new scale factor based on this reference
-                    const originalDistance = label.userData.originalDistance;
-                    measurementState.globalScaleFactor = parseFloat(newValue) / originalDistance;
+                if (intersects.length > 0) {
+                    const label = intersects[0].object;
                     
-                    // Update all measurement labels
-                    updateAllMeasurementLabels();
+                    if (label.userData.isTotal) return;
+                    
+                    const newValue = prompt('Enter reference measurement value:', label.userData.text);
+                    
+                    if (newValue !== null && !isNaN(parseFloat(newValue))) {
+                        const originalDistance = label.userData.originalDistance;
+                        measurementState.globalScaleFactor = parseFloat(newValue) / originalDistance;
+                        
+                        updateAllMeasurementLabels();
+                    }
                 }
             }
         });
         
         // Update all measurement labels with the current scale factor
         function updateAllMeasurementLabels() {
-            // Update regular segment labels
             measurementObjects.labels.forEach(label => {
                 if (label.userData.isTotal) {
-                    // Handle total labels differently
                     return;
                 }
                 
@@ -772,10 +709,8 @@
                 }
             });
             
-            // Update total labels (need to recalculate from segments)
             const totalLabels = measurementObjects.labels.filter(l => l.userData.isTotal);
             
-            // Group measurements based on connected segments
             const processedLines = new Set();
             const measurementGroups = [];
             
@@ -793,7 +728,6 @@
                     const line = measurementObjects.lines[lineIndex];
                     group.push(line);
                     
-                    // Find connected lines
                     for (let j = 0; j < measurementObjects.lines.length; j++) {
                         if (processedLines.has(j)) continue;
                         
@@ -807,14 +741,12 @@
                 if (group.length > 0) measurementGroups.push(group);
             }
             
-            // Update each total label
             totalLabels.forEach((totalLabel, index) => {
                 if (index < measurementGroups.length) {
                     const lines = measurementGroups[index];
                     let totalDistance = 0;
                     
                     lines.forEach(line => {
-                        // Get positions from line geometry
                         const positions = line.geometry.attributes.position.array;
                         const start = new THREE.Vector3(positions[0], positions[1], positions[2]);
                         const end = new THREE.Vector3(positions[3], positions[4], positions[5]);
@@ -860,20 +792,16 @@
         
         // Update position based on movement state
         function update(deltaTime) {
-            // Only calculate movement if needed
             if (movementState.forward || movementState.right) {
-                // Get movement directions
                 camera.getWorldDirection(vec.direction);
                 vec.right.crossVectors(vec.worldUp, vec.direction).normalize();
                 
-                // Calculate movement vector
                 vec.move.set(0, 0, 0);
                 if (movementState.forward) vec.move.addScaledVector(vec.direction, movementState.forward);
                 if (movementState.right) vec.move.addScaledVector(vec.right, -movementState.right);
                 
                 if (vec.move.lengthSq() > 0.001) vec.move.normalize();
                 
-                // Apply movement
                 const speed = movementState.shift ? config.moveSpeed.boost : config.moveSpeed.normal;
                 pivot.position.addScaledVector(vec.move, speed * deltaTime);
             }
@@ -886,8 +814,7 @@
             requestAnimationFrame(animate);
             if (isPointerLocked) update(clock.getDelta());
             
-            // Update measurement preview if active
-            if (measurementState.measuring) {
+            if (measurementState.points.length > 0) {
                 updateMeasurementPreview();
             }
             
