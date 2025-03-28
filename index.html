@@ -91,14 +91,13 @@
             // Camera & pivot
             camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
             pivot = new THREE.Object3D();
-            pivot.position.set(0, 1.7, 0);
             scene.add(pivot);
             updateCameraPosition();
             
             // Lighting
             scene.add(
-                new THREE.AmbientLight(0xffffff, 0.6),
-                new THREE.DirectionalLight(0xffffff, 0.8).translateSet(10, 20, 5)
+                new THREE.AmbientLight(0xffffff, 0.1),
+                new THREE.DirectionalLight(0xffffff, 2.8)
             );
             
             // Add objects, setup events, start animation
@@ -203,12 +202,6 @@
             if (isPointerLocked) update(clock.getDelta());
             renderer.render(scene, camera);
         }
-        
-        // Add utility method to DirectionalLight for positioning
-        THREE.DirectionalLight.prototype.translateSet = function(x, y, z) {
-            this.position.set(x, y, z);
-            return this;
-        };
         
         // Start
         init();
