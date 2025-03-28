@@ -108,7 +108,7 @@
 
             // Set initial camera position relative to pivot based on initial pitch/yaw
             updateCameraPosition(); // Will calculate initial position based on pitch=0, yaw=0
-            camera.lookAt(pivot.position);
+            camera.lookAt(pivot.position); // Look at pivot initially
 
             // --- Scene Content ---
             // Ground Plane
@@ -204,9 +204,6 @@
             // Update Pitch (vertical rotation) - Clamp vertical angle
             pitch -= deltaY * mouseSensitivity;
             pitch = Math.max(-verticalRotationLimit, Math.min(verticalRotationLimit, pitch));
-
-            // We don't directly rotate the pivot anymore with mouse look.
-            // Pivot position changes via movement, camera position/rotation calculated from pitch/yaw.
         }
 
         function onPointerLockChange() {
@@ -218,7 +215,6 @@
                 isPointerLocked = false;
                 crosshairElement.style.display = 'none';
                 instructionsElement.style.display = 'block';
-                // Reset movement when releasing lock to prevent runaway movement
                 movementState.forward = 0;
                 movementState.right = 0;
                 movementState.shift = false;
@@ -234,82 +230,53 @@
 
         // --- Update Camera Position relative to Pivot ---
         function updateCameraPosition() {
-            // Start with offset directly behind the pivot *along the negative Z axis in pivot space*
             const offset = new THREE.Vector3(0, 0, initialCameraDistance);
-
-            // Create a quaternion representing the camera's orientation based on pitch and yaw
-            // Apply yaw first (around world Y), then pitch (around camera's local X)
             const quaternion = new THREE.Quaternion();
             const yawQuaternion = new THREE.Quaternion().setFromAxisAngle(worldUp, yaw);
             const pitchQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
-
-            // Combine rotations: apply pitch relative to the yawed orientation
             quaternion.multiplyQuaternions(yawQuaternion, pitchQuaternion);
-
-            // Rotate the offset vector by the combined quaternion
             offset.applyQuaternion(quaternion);
-
-            // Calculate final camera position by adding the rotated offset to the pivot position
             camera.position.copy(pivot.position).add(offset);
-
-            // Set camera rotation using the same quaternion
             camera.quaternion.copy(quaternion);
-
-             // Ensure camera looks forward along its orientation, not necessarily AT the pivot anymore
-             // This allows the pivot to be the center of *movement* but not strictly the look-at target
-             // camera.lookAt(pivot.position); // We remove this line
         }
 
 
         // --- Update Logic ---
+        // CORRECTED SECTION: Removed negations for movement state scaling
         function update(deltaTime) {
             const currentSpeed = movementState.shift ? boostMoveSpeed : normalMoveSpeed;
             const moveDelta = currentSpeed * deltaTime;
 
-            // --- Calculate Movement Directions ---
-            // Forward/Backward based on Camera's actual direction
-            camera.getWorldDirection(tempCameraDirection); // Gets the vector the camera is looking along
+            camera.getWorldDirection(tempCameraDirection);
+            tempRightDirection.crossVectors(worldUp, tempCameraDirection).normalize();
 
-            // Right/Left based on a horizontal plane (using world Up and camera direction)
-            // This ensures strafing is horizontal regardless of pitch
-            tempRightDirection.crossVectors(worldUp, tempCameraDirection).normalize(); // Calculate right vector relative to world vertical
+            tempMoveVector.set(0, 0, 0);
 
-            // --- Calculate Final Movement Vector ---
-            tempMoveVector.set(0, 0, 0); // Reset move vector
-
-            // Add forward/backward component (use NEGATED camera direction)
             if (movementState.forward !== 0) {
-                tempMoveVector.addScaledVector(tempCameraDirection, -movementState.forward); // Invert forward state
+                // Corrected: No longer negating movementState.forward
+                tempMoveVector.addScaledVector(tempCameraDirection, movementState.forward);
             }
-            // Add right/left component
             if (movementState.right !== 0) {
-                tempMoveVector.addScaledVector(tempRightDirection, -movementState.right); // Use calculated right vector, invert right state
+                 // Corrected: No longer negating movementState.right
+                tempMoveVector.addScaledVector(tempRightDirection, movementState.right);
             }
 
-            // Normalize the final move vector ONLY if there's combined movement (diagonal)
-            // to ensure consistent speed. Check magnitude squared for efficiency.
-             if (tempMoveVector.lengthSq() > 0) { // Check if there is any movement input
+             if (tempMoveVector.lengthSq() > 1e-6) {
                  tempMoveVector.normalize();
              }
 
-
-            // --- Apply Movement ---
             pivot.position.addScaledVector(tempMoveVector, moveDelta);
-
-            // Update camera position based on new pivot position and current pitch/yaw
             updateCameraPosition();
         }
+        // --- End of Corrected Section ---
 
         // --- Animation Loop ---
         function animate() {
             requestAnimationFrame(animate);
-
             const deltaTime = clock.getDelta();
-
             if (isPointerLocked) {
                  update(deltaTime);
             }
-
             renderer.render(scene, camera);
         }
 
