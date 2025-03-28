@@ -4,42 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Fly Navigation - Three.js</title>
-    <style>
-        body { margin: 0; overflow: hidden; background-color: #333; }
-        canvas { display: block; }
-        #crosshair {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 2px; /* crosshairSize constant */
-            height: 2px; /* crosshairSize constant */
-            background-color: white;
-            border-radius: 50%;
-            transform: translate(-50%, -50%);
-            pointer-events: none; /* Allows clicking through */
-            display: none; /* Hidden until pointer lock */
-        }
-        #instructions {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: white;
-            font-family: sans-serif;
-            background-color: rgba(0,0,0,0.5);
-            padding: 10px;
-            border-radius: 5px;
-        }
-    </style>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-    <div id="instructions">
+<body class="m-0 overflow-hidden bg-gray-800">
+    <div id="instructions" class="absolute top-2.5 left-2.5 text-white font-sans bg-black bg-opacity-50 p-2.5 rounded">
         Click to start navigation<br/>
         WASD/Arrows: Move<br/>
         Shift: Speed Boost<br/>
         Mouse: Look<br/>
         ESC: Release Mouse
     </div>
-    <div id="crosshair"></div>
+    <div id="crosshair" class="absolute top-1/2 left-1/2 w-0.5 h-0.5 bg-white rounded-full transform -translate-x-1/2 -translate-y-1/2 pointer-events-none hidden"></div>
 
     <script type="importmap">
         {
