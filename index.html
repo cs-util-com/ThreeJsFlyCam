@@ -9,7 +9,7 @@
 <body class="m-0 overflow-hidden bg-gray-800">
     <div id="instructions" class="absolute top-2.5 left-2.5 text-white font-sans bg-black bg-opacity-50 p-2.5 rounded">
         Click to start navigation<br/>
-        WASD/Arrows: Move<br/>
+        WASD: Move<br/>
         Shift: Speed Boost<br/>
         Mouse: Look<br/>
         ESC: Release Mouse
@@ -117,11 +117,12 @@
             
             // Key handlers - reuse the same patterns for down/up
             const keyMap = {
-                'KeyW': ['forward', 1], 'ArrowUp': ['forward', 1],
-                'KeyS': ['forward', -1], 'ArrowDown': ['forward', -1],
-                'KeyA': ['right', -1], 'ArrowLeft': ['right', -1],
-                'KeyD': ['right', 1], 'ArrowRight': ['right', 1],
-                'ShiftLeft': ['shift', true], 'ShiftRight': ['shift', true]
+                'KeyW': ['forward', 1],
+                'KeyS': ['forward', -1],
+                'KeyA': ['right', -1],
+                'KeyD': ['right', 1],
+                'ShiftLeft': ['shift', true],
+                'ShiftRight': ['shift', true]
             };
             
             document.addEventListener('keydown', (event) => {
