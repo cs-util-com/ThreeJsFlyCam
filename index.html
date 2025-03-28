@@ -82,8 +82,24 @@
             currentLine: null,
             snapAxis: null,
             globalScaleFactor: 1.0,
-            lastClickTime: 0
+            lastClickTime: 0,
+            currentColorIndex: 0
         };
+        
+        // Pastel colors for measurement lines
+        const lineColors = [
+            0x98DDCA, // Soft Mint
+            0xFFAEBC, // Pastel Pink
+            0xFFD6A5, // Pastel Orange
+            0xBBDEFB, // Soft Blue
+            0xD0F0C0, // Tea Green
+            0xF4C2C2, // Baby Pink
+            0xCCCCFF, // Periwinkle
+            0xF8C8DC, // Cotton Candy
+            0xFDFD96, // Pastel Yellow
+            0xBDECB6  // Soft Green
+        ];
+        
         const measurementObjects = {
             lines: [],
             points: [],
@@ -411,21 +427,24 @@
         // Create a measurement segment between two points
         function createMeasurementSegment(start, end) {
             const lineGeometry = new THREE.BufferGeometry().setFromPoints([start, end]);
-            const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+            const lineColor = measurementState.currentLineColor;
+            const lineMaterial = new THREE.LineBasicMaterial({ color: lineColor });
             const line = new THREE.Line(lineGeometry, lineMaterial);
             measurementGroup.add(line);
             
             const distance = start.distanceTo(end) * measurementState.globalScaleFactor;
             const midpoint = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
-            const label = createTextLabel(distance.toFixed(2), midpoint);
+            const label = createTextLabel(distance.toFixed(2), midpoint, lineColor);
             label.userData.start = start.clone();
             label.userData.end = end.clone();
             label.userData.originalDistance = start.distanceTo(end);
+            label.userData.lineColor = lineColor;
             measurementGroup.add(label);
             
             measurementState.currentLine = {
                 line: line,
-                labelObject: label
+                labelObject: label,
+                color: lineColor
             };
             
             label.userData.isLabel = true;
@@ -438,14 +457,26 @@
         }
         
         // Create text label for measurements
-        function createTextLabel(text, position) {
+        function createTextLabel(text, position, color = 0xffffff) {
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
             canvas.width = 256;
             canvas.height = 64;
             
-            context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            // Convert hex color to rgb for canvas
+            const r = (color >> 16) & 255;
+            const g = (color >> 8) & 255;
+            const b = color & 255;
+            
+            // Darker background based on the color
+            context.fillStyle = `rgba(${r * 0.7 | 0}, ${g * 0.7 | 0}, ${b * 0.7 | 0}, 0.8)`;
             context.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Add a border using the line color
+            context.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+            context.lineWidth = 4;
+            context.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+            
             context.font = '24px Arial';
             context.fillStyle = 'white';
             context.textAlign = 'center';
@@ -464,6 +495,7 @@
             sprite.renderOrder = 999;  // Ensure labels render on top
             
             sprite.userData.text = text;
+            sprite.userData.color = color;
             
             return sprite;
         }
@@ -475,8 +507,22 @@
             canvas.width = 256;
             canvas.height = 64;
             
-            context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            const color = label.userData.color || 0xffffff;
+            
+            // Convert hex color to rgb for canvas
+            const r = (color >> 16) & 255;
+            const g = (color >> 8) & 255;
+            const b = color & 255;
+            
+            // Darker background based on the color
+            context.fillStyle = `rgba(${r * 0.7 | 0}, ${g * 0.7 | 0}, ${b * 0.7 | 0}, 0.8)`;
             context.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Add a border using the line color
+            context.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+            context.lineWidth = 4;
+            context.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+            
             context.font = '24px Arial';
             context.fillStyle = 'white';
             context.textAlign = 'center';
@@ -524,10 +570,12 @@
                 
                 measurementState.previewPoint = previewPoint;
                 
+                const lineColor = measurementState.currentLineColor;
+                
                 if (!measurementState.previewLine) {
                     const lineGeometry = new THREE.BufferGeometry().setFromPoints([lastPoint, previewPoint]);
                     const lineMaterial = new THREE.LineDashedMaterial({ 
-                        color: 0xffffff,
+                        color: lineColor,
                         dashSize: 0.2,
                         gapSize: 0.1
                     });
@@ -545,7 +593,7 @@
                 const midpoint = new THREE.Vector3().addVectors(lastPoint, previewPoint).multiplyScalar(0.5);
                 
                 if (!measurementState.previewLabel) {
-                    measurementState.previewLabel = createTextLabel(distance.toFixed(2), midpoint);
+                    measurementState.previewLabel = createTextLabel(distance.toFixed(2), midpoint, lineColor);
                     measurementGroup.add(measurementState.previewLabel);
                 } else {
                     updateLabelText(measurementState.previewLabel, distance.toFixed(2));
@@ -574,10 +622,12 @@
                 
                 measurementState.previewPoint = previewPoint;
                 
+                const lineColor = measurementState.currentLineColor;
+                
                 if (!measurementState.previewLine) {
                     const lineGeometry = new THREE.BufferGeometry().setFromPoints([lastPoint, previewPoint]);
                     const lineMaterial = new THREE.LineDashedMaterial({ 
-                        color: 0xffffff,
+                        color: lineColor,
                         dashSize: 0.2,
                         gapSize: 0.1
                     });
@@ -595,7 +645,7 @@
                 const midpoint = new THREE.Vector3().addVectors(lastPoint, previewPoint).multiplyScalar(0.5);
                 
                 if (!measurementState.previewLabel) {
-                    measurementState.previewLabel = createTextLabel(distance.toFixed(2), midpoint);
+                    measurementState.previewLabel = createTextLabel(distance.toFixed(2), midpoint, lineColor);
                     measurementGroup.add(measurementState.previewLabel);
                 } else {
                     updateLabelText(measurementState.previewLabel, distance.toFixed(2));
@@ -622,6 +672,9 @@
                 measurementState.previewLabel.material.dispose();
                 measurementState.previewLabel = null;
             }
+            
+            // Get current line color
+            const lineColor = measurementState.currentLineColor;
             
             for (let i = 0; i < measurementState.points.length; i++) {
                 const point = measurementState.points[i];
@@ -652,8 +705,9 @@
                 const centerPosition = measurementState.points[midIndex].clone();
                 centerPosition.y += 0.2;
                 
-                const totalLabel = createTextLabel(`Total: ${totalDistance.toFixed(2)}`, centerPosition);
+                const totalLabel = createTextLabel(`Total: ${totalDistance.toFixed(2)}`, centerPosition, lineColor);
                 totalLabel.userData.isTotal = true;
+                totalLabel.userData.lineColor = lineColor;
                 totalLabel.scale.set(1.5, 0.4, 1);
                 measurementGroup.add(totalLabel);
                 measurementObjects.labels.push(totalLabel);
@@ -705,6 +759,9 @@
             measurementState.previewPoint = new THREE.Vector3();
             measurementState.currentLine = null;
             measurementState.snapAxis = null;
+            
+            // Set a new color for this measurement line
+            measurementState.currentLineColor = getNextLineColor();
             
             if (measurementState.previewLine) {
                 measurementGroup.remove(measurementState.previewLine);
@@ -878,6 +935,13 @@
                 line1End.distanceToSquared(line2Start) < threshold ||
                 line1End.distanceToSquared(line2End) < threshold
             );
+        }
+        
+        // Get the next color from the palette
+        function getNextLineColor() {
+            const color = lineColors[measurementState.currentColorIndex];
+            measurementState.currentColorIndex = (measurementState.currentColorIndex + 1) % lineColors.length;
+            return color;
         }
         
         // Update camera position based on pivot position and rotation
