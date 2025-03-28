@@ -178,43 +178,50 @@
             };
             
             document.addEventListener('keydown', (event) => {
-                // Handle measurement-specific keys
-                if (isPointerLocked) {
-                    if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
-                        measurementState.snapAxis = 'y';
-                        event.preventDefault();
-                        return;
-                    } else if (event.code === 'ArrowLeft') {
-                        measurementState.snapAxis = 'x';
-                        event.preventDefault();
-                        return;
-                    } else if (event.code === 'ArrowRight') {
-                        measurementState.snapAxis = 'z';
-                        event.preventDefault();
-                        return;
-                    } else if (event.code === 'Backspace' || event.code === 'Delete') {
-                        // Remove last point
-                        if (measurementState.points.length > 0) {
-                            removeLastMeasurementPoint();
-                        }
-                        event.preventDefault();
-                        return;
-                    } else if (event.code === 'KeyR' || event.code === 'Enter') {
-                        // Complete current measurement
-                        if (measurementState.points.length > 0) {
-                            if (measurementState.points.length >= 2) {
-                                completeMeasurement();
-                            } else {
-                                cancelCurrentMeasurement();
-                            }
-                        }
-                        event.preventDefault();
-                        return;
+                if (!isPointerLocked) return;
+
+                // Combine arrow key handling
+                if (event.code.startsWith('Arrow')) {
+                    switch (event.code) {
+                        case 'ArrowUp':
+                        case 'ArrowDown':
+                            measurementState.snapAxis = 'y';
+                            break;
+                        case 'ArrowLeft':
+                            measurementState.snapAxis = 'x';
+                            break;
+                        case 'ArrowRight':
+                            measurementState.snapAxis = 'z';
+                            break;
                     }
+                    event.preventDefault();
+                    return;
                 }
-                
-                // Handle movement keys
-                if (!isPointerLocked || !keyMap[event.code]) return;
+
+                // Handle backspace/delete
+                if (event.code === 'Backspace' || event.code === 'Delete') {
+                    if (measurementState.points.length > 0) {
+                        removeLastMeasurementPoint();
+                    }
+                    event.preventDefault();
+                    return;
+                }
+
+                // Handle R/Enter
+                if (event.code === 'KeyR' || event.code === 'Enter') {
+                    if (measurementState.points.length > 0) {
+                        if (measurementState.points.length >= 2) {
+                            completeMeasurement();
+                        } else {
+                            cancelCurrentMeasurement();
+                        }
+                    }
+                    event.preventDefault();
+                    return;
+                }
+
+                // Movement keys
+                if (!keyMap[event.code]) return;
                 const [property, value] = keyMap[event.code];
                 movementState[property] = value;
             });
@@ -330,9 +337,11 @@
             // First check if we hit an existing reference point
             const existingPointIndex = checkHitReferencePoint();
             
+            let position = null;
+            
             if (existingPointIndex !== -1) {
-                // Use existing reference point
-                addMeasurementPoint(measurementObjects.points[existingPointIndex].position.clone());
+                // Get the reference point position
+                position = measurementObjects.points[existingPointIndex].position.clone();
             } else {
                 // Check for intersections with all scene objects (excluding measurement objects)
                 const sceneObjects = scene.children.filter(child => child !== measurementGroup);
@@ -340,25 +349,28 @@
                 
                 if (intersects.length > 0) {
                     // Use the first intersection point
-                    const position = intersects[0].point.clone();
-                    
-                    // Apply axis snapping if active
-                    if (measurementState.snapAxis && measurementState.points.length > 0) {
-                        const lastPoint = measurementState.points[measurementState.points.length - 1];
-                        if (measurementState.snapAxis === 'x') {
-                            position.y = lastPoint.y;
-                            position.z = lastPoint.z;
-                        } else if (measurementState.snapAxis === 'y') {
-                            position.x = lastPoint.x;
-                            position.z = lastPoint.z;
-                        } else if (measurementState.snapAxis === 'z') {
-                            position.x = lastPoint.x;
-                            position.y = lastPoint.y;
-                        }
-                    }
-                    
-                    addMeasurementPoint(position);
+                    position = intersects[0].point.clone();
                 }
+            }
+            
+            // If we have a position (either from reference point or scene object)
+            if (position) {
+                // Apply axis snapping if active and we have previous points
+                if (measurementState.snapAxis && measurementState.points.length > 0) {
+                    const lastPoint = measurementState.points[measurementState.points.length - 1];
+                    if (measurementState.snapAxis === 'x') {
+                        position.y = lastPoint.y;
+                        position.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'y') {
+                        position.x = lastPoint.x;
+                        position.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'z') {
+                        position.x = lastPoint.x;
+                        position.y = lastPoint.y;
+                    }
+                }
+                
+                addMeasurementPoint(position);
             }
             
             // Reset snap axis after adding a point
@@ -836,9 +848,9 @@
                     let totalDistance = 0;
                     
                     lines.forEach(line => {
-                        const positions = line.geometry.attributes.position.array;
-                        const start = new THREE.Vector3(positions[0], positions[1], positions[2]);
-                        const end = new THREE.Vector3(positions[3], positions[4], positions[5]);
+                        const pos = line.geometry.attributes.position.array;
+                        const start = new THREE.Vector3(pos[0], pos[1], pos[2]);
+                        const end = new THREE.Vector3(pos[3], pos[4], pos[5]);
                         totalDistance += start.distanceTo(end);
                     });
                     
