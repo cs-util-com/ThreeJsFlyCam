@@ -96,8 +96,10 @@
             updateCameraPosition();
             
             // Lighting
-            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-            scene.add(new THREE.DirectionalLight(0xffffff, 0.8).translateSet(10, 20, 5));
+            scene.add(
+                new THREE.AmbientLight(0xffffff, 0.6),
+                new THREE.DirectionalLight(0xffffff, 0.8).translateSet(10, 20, 5)
+            );
             
             // Add objects, setup events, start animation
             createObjects();
@@ -141,9 +143,11 @@
             document.addEventListener('mousemove', (event) => {
                 if (!isPointerLocked) return;
                 yaw -= (event.movementX || 0) * config.mouseSensitivity;
-                pitch = Math.max(-config.verticalRotationLimit, 
-                         Math.min(config.verticalRotationLimit, 
-                         pitch - (event.movementY || 0) * config.mouseSensitivity));
+                pitch = THREE.MathUtils.clamp(
+                    pitch - (event.movementY || 0) * config.mouseSensitivity,
+                    -config.verticalRotationLimit,
+                    config.verticalRotationLimit
+                );
             });
             
             // Pointer lock events
@@ -152,13 +156,6 @@
                 elements.crosshair.style.display = isPointerLocked ? 'block' : 'none';
                 elements.instructions.style.display = isPointerLocked ? 'none' : 'block';
                 if (!isPointerLocked) Object.assign(movementState, {forward: 0, right: 0, shift: false});
-            });
-            
-            document.addEventListener('pointerlockerror', () => {
-                console.error('Pointer Lock failed.');
-                isPointerLocked = false;
-                elements.crosshair.style.display = 'none';
-                elements.instructions.style.display = 'block';
             });
             
             renderer.domElement.addEventListener('click', () => {
