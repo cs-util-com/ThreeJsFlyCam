@@ -64,8 +64,8 @@
         function init() {
             // Scene
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x87ceeb); // Sky blue background
-            scene.fog = new THREE.Fog(0x87ceeb, 50, 200);
+            scene.background = new THREE.Color(0x353ebd); 
+            scene.fog = new THREE.Fog(0x87ceeb, 1, 200);
 
             // Renderer
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -86,13 +86,6 @@
             camera.lookAt(pivot.position); // Look at pivot initially
 
             // --- Scene Content ---
-            // Ground Plane
-            const groundGeo = new THREE.PlaneGeometry(500, 500);
-            const groundMat = new THREE.MeshStandardMaterial({ color: 0x228B22, side: THREE.DoubleSide }); // Forest green
-            const ground = new THREE.Mesh(groundGeo, groundMat);
-            ground.rotation.x = -Math.PI / 2;
-            scene.add(ground);
-
             // Simple Shapes
             const boxGeo = new THREE.BoxGeometry(2, 2, 2);
             const sphereGeo = new THREE.SphereGeometry(1.5, 32, 16);
@@ -113,6 +106,34 @@
             const cone = new THREE.Mesh(coneGeo, mat3);
             cone.position.set(0, 1.5, -12);
             scene.add(cone);
+
+            // Distant Large Objects
+            const giantCubeGeo = new THREE.BoxGeometry(20, 20, 20);
+            const giantTorusGeo = new THREE.TorusGeometry(15, 5, 16, 50);
+            const giantCylinderGeo = new THREE.CylinderGeometry(10, 10, 30, 32);
+            const giantPyramidGeo = new THREE.ConeGeometry(15, 30, 4);
+            
+            const matGiant1 = new THREE.MeshStandardMaterial({ color: 0x9370DB }); // Purple
+            const matGiant2 = new THREE.MeshStandardMaterial({ color: 0x00CED1 }); // Turquoise
+            const matGiant3 = new THREE.MeshStandardMaterial({ color: 0xFF8C00 }); // Dark Orange
+            const matGiant4 = new THREE.MeshStandardMaterial({ color: 0x32CD32 }); // Lime Green
+            
+            const giantCube = new THREE.Mesh(giantCubeGeo, matGiant1);
+            giantCube.position.set(70, 10, -50);
+            scene.add(giantCube);
+            
+            const giantTorus = new THREE.Mesh(giantTorusGeo, matGiant2);
+            giantTorus.position.set(-80, 20, -90);
+            giantTorus.rotation.x = Math.PI / 2;
+            scene.add(giantTorus);
+            
+            const giantCylinder = new THREE.Mesh(giantCylinderGeo, matGiant3);
+            giantCylinder.position.set(30, 15, -120);
+            scene.add(giantCylinder);
+            
+            const giantPyramid = new THREE.Mesh(giantPyramidGeo, matGiant4);
+            giantPyramid.position.set(-40, 15, -150);
+            scene.add(giantPyramid);
 
             // --- Lighting ---
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -240,7 +261,6 @@
             pivot.position.addScaledVector(tempMoveVector, moveDelta);
             updateCameraPosition();
         }
-        // --- End of Corrected Section ---
 
         // --- Animation Loop ---
         function animate() {
