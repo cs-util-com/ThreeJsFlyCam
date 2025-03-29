@@ -78,18 +78,6 @@
   <div id="splatsError" class="text-red-400 hidden mt-2"></div>
 </div>
 
-<!-- Progress Bar -->
-<div id="loading-progress"
-     class="fixed top-5 left-1/2 transform -translate-x-1/2
-            bg-black bg-opacity-70 p-3 rounded text-white z-50 hidden">
-  <div class="text-center mb-2">Loading...</div>
-  <div class="w-64 h-4 bg-gray-700 rounded overflow-hidden">
-    <div id="progress-bar-inner" class="h-full bg-blue-500 transition-all duration-300 ease-out"
-         style="width: 0%;">
-    </div>
-  </div>
-</div>
-
 <script type="module">
   /*********************************************************
    *   Babylon.js 8 Scene Setup
@@ -101,32 +89,28 @@
   canvas.style.display = 'block';
   canvas.style.touchAction = 'none';
 
-  // Create Engine and Scene
+  // Create Engine and Scene - simplified approach
   const engine = new BABYLON.Engine(canvas, true, { adaptToDeviceRatio: true });
   const scene = new BABYLON.Scene(engine);
-
+  
   // Fog & background color
   scene.clearColor = new BABYLON.Color4(0.21, 0.24, 0.74, 1);
   scene.fogMode = BABYLON.Scene.FOGMODE_EXP;
   scene.fogDensity = 0.003;
   scene.fogColor = new BABYLON.Color3(0.53, 0.78, 0.93);
 
-  // Camera
+  // Camera setup - keep the fly camera behavior
   const camera = new BABYLON.UniversalCamera("Camera", new BABYLON.Vector3(0, 2, -5), scene);
   camera.fov = 1.1;
   camera.minZ = 0.05;
-  camera.speed = 0.5;              // base movement speed
-  camera.angularSensibility = 2000;// mouse look sensitivity
+  camera.speed = 0.5;
+  camera.angularSensibility = 2000;
   scene.activeCamera = camera;
-
-  // Attach camera for basic moves (optional if you want to handle them manually)
   camera.attachControl(canvas, false);
 
-  // Lights
+  // Basic lighting
   const light1 = new BABYLON.HemisphericLight("HemiLight", new BABYLON.Vector3(0,1,0), scene);
   light1.intensity = 0.8;
-  const light2 = new BABYLON.DirectionalLight("DirLight", new BABYLON.Vector3(-0.2,-1,0.2), scene);
-  light2.intensity = 2.0;
 
   // For toggling pointer lock
   let isPointerLocked = false;
@@ -207,31 +191,26 @@
     canvas.style.height = '100vh';
   });
 
-  // Create a ground + test objects
+  // Create a ground + test objects - simplified
   createTestEnvironment();
   function createTestEnvironment(){
-    const ground = BABYLON.MeshBuilder.CreateGround("ground",{width:60, height:60}, scene);
-    ground.position.y = 0;
-    const gmat = new BABYLON.StandardMaterial("gmat", scene);
-    gmat.diffuseColor = new BABYLON.Color3(0.4, 0.4, 0.4);
-    ground.material = gmat;
-    ground.isPickable = true; // Explicitly set pickable
+    
 
     const box = BABYLON.MeshBuilder.CreateBox("box",{size:2}, scene);
     box.position.set(8,1,0);
     box.material = new BABYLON.StandardMaterial("boxMat", scene);
     box.material.diffuseColor = BABYLON.Color3.Red();
-    box.isPickable = true; // Explicitly set pickable
+    box.isPickable = true;
 
     const sphere = BABYLON.MeshBuilder.CreateSphere("sphere",{diameter:3}, scene);
     sphere.position.set(-8,1.5,-5);
     sphere.material = new BABYLON.StandardMaterial("sphereMat", scene);
     sphere.material.diffuseColor = BABYLON.Color3.Blue();
-    sphere.isPickable = true; // Explicitly set pickable
+    sphere.isPickable = true;
   }
 
   /*********************************************************
-   *   Gaussian Splatting - Load .ply/.splat/.spz
+   *   Gaussian Splatting - Simplified Loading with built-in UI
    *********************************************************/
   const splatsErrorEl = document.getElementById('splatsError');
   const selectFileBtn = document.getElementById('select-file-btn');
@@ -267,41 +246,24 @@
       return;
     }
 
-    const progressBarContainer = document.getElementById('loading-progress');
-    const progressBarInner     = document.getElementById('progress-bar-inner');
-    progressBarContainer.style.display = 'block';
-    progressBarInner.style.width = '0%';
+    // Use Babylon's built-in loading UI
+    engine.displayLoadingUI();
 
     try {
       const arrayBuffer = await file.arrayBuffer();
       const blob = new Blob([arrayBuffer]);
       const blobURL = URL.createObjectURL(blob);
 
-      // Import with SceneLoader (Babylon can auto-detect .ply/.splat/.spz)
-      await BABYLON.SceneLoader.ImportMeshAsync(
-        "",
-        blobURL,
-        "",
-        scene,
-        (evt) => {
-          if (evt.lengthComputable) {
-            const percent = Math.floor((evt.loaded * 100) / evt.total);
-            progressBarInner.style.width = percent + "%";
-          }
-        }
-      );
-
-      progressBarInner.style.width = "100%";
-      setTimeout(() => {
-        progressBarContainer.style.display = 'none';
-      }, 600);
-
+      // Simplified loading approach
+      await BABYLON.SceneLoader.ImportMeshAsync("", blobURL, "", scene);
+      
+      engine.hideLoadingUI();
       URL.revokeObjectURL(blobURL);
       console.log(name, "loaded successfully as Gaussian Splats");
     } catch (err) {
       console.error("Error loading file:", err);
       showSplatError(`Failed to load file: ${err.message || 'Unknown error'}`);
-      progressBarContainer.style.display = 'none';
+      engine.hideLoadingUI();
     }
   }
 
@@ -309,6 +271,19 @@
     splatsErrorEl.innerText = msg;
     splatsErrorEl.classList.remove('hidden');
   }
+
+  // You can load a default splat if desired
+  
+  engine.displayLoadingUI();
+  BABYLON.SceneLoader.ImportMeshAsync(
+    "", 
+    "https://raw.githubusercontent.com/CedricGuillemet/dump/master/racoonfamily.spz", 
+    "", 
+    scene
+  ).then(() => {
+    engine.hideLoadingUI();
+  });
+  
 
   /*********************************************************
    *   Measurement Tools (Points, Lines, Labels)
