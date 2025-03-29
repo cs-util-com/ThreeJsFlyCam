@@ -190,44 +190,26 @@
                 progressBar.style.display = 'block';
                 updateProgressBar(0);
                 
-                if (fileName.endsWith('.spz')) {
-                    // For SPZ files: Use the fetch API to get the binary data
-                    const response = await fetch(url);
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! Status: ${response.status}`);
+                // Both file types use the same approach with separate params
+                const options = {
+                    position: [0, 1, 0],
+                    rotation: [0, 0, 0, 1],
+                    scale: [1, 1, 1],
+                    onProgress: (progress) => {
+                        console.log(`Loading progress: ${progress * 100}%`);
+                        updateProgressBar(progress * 100);
                     }
-                    
-                    const arrayBuffer = await response.arrayBuffer();
-                    
-                    // Create a scene with the binary data
-                    await splatViewer.addSplatScene({
-                        url, // Still include the URL for format detection
-                        buffer: arrayBuffer, // Provide the raw buffer data
-                        format: 'spz', // Explicitly specify SPZ format
-                        position: [0, 1, 0],
-                        rotation: [0, 0, 0, 1],
-                        scale: [1, 1, 1],
-                        onProgress: (progress) => {
-                            console.log(`Loading progress: ${progress * 100}%`);
-                            updateProgressBar(progress * 100);
-                        }
-                    });
-                    
-                    console.log('SPZ file loaded successfully and added to scene');
-                } else if (fileName.endsWith('.ply')) {
-                    // For PLY files, use standard approach
-                    await splatViewer.addSplatScene({
-                        url,
-                        format: 'ply',
-                        position: [0, 1, 0],
-                        rotation: [0, 0, 0, 1],
-                        scale: [1, 1, 1],
-                        onProgress: (progress) => {
-                            updateProgressBar(progress * 100);
-                        }
-                    });
+                };
+                
+                // Explicitly pass format on PLY files for old versions that need it
+                if (fileName.endsWith('.ply')) {
+                    options.format = 'ply';
                 }
                 
+                // Add the scene
+                await splatViewer.addSplatScene(url, options);
+                
+                console.log(`${fileName} loaded successfully and added to scene`);
                 splatViewer.start();
                 updateProgressBar(100);
             } catch (err) {
