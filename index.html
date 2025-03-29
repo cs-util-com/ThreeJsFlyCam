@@ -215,16 +215,19 @@
     const gmat = new BABYLON.StandardMaterial("gmat", scene);
     gmat.diffuseColor = new BABYLON.Color3(0.4, 0.4, 0.4);
     ground.material = gmat;
+    ground.isPickable = true; // Explicitly set pickable
 
     const box = BABYLON.MeshBuilder.CreateBox("box",{size:2}, scene);
     box.position.set(8,1,0);
     box.material = new BABYLON.StandardMaterial("boxMat", scene);
     box.material.diffuseColor = BABYLON.Color3.Red();
+    box.isPickable = true; // Explicitly set pickable
 
     const sphere = BABYLON.MeshBuilder.CreateSphere("sphere",{diameter:3}, scene);
     sphere.position.set(-8,1.5,-5);
     sphere.material = new BABYLON.StandardMaterial("sphereMat", scene);
     sphere.material.diffuseColor = BABYLON.Color3.Blue();
+    sphere.isPickable = true; // Explicitly set pickable
   }
 
   /*********************************************************
@@ -365,80 +368,87 @@
 
     // If locked, left-click => place measurement point
     if (evt.button === 0) {
-      // Use a ray from the camera through screen center since pointer is locked
-      const ray = camera.getForwardRay();
-      const hit = scene.pickWithRay(ray);
-      
-      if (hit?.pickedPoint) {
-        let pointPos = hit.pickedPoint.clone();
-        // snap axis
-        if (snapAxis && activePoints.length > 0) {
-          const lastPt = activePoints[activePoints.length - 1];
-          if (snapAxis === 'x') {
-            pointPos.y = lastPt.y;
-            pointPos.z = lastPt.z;
-          } else if (snapAxis === 'y') {
-            pointPos.x = lastPt.x;
-            pointPos.z = lastPt.z;
-          } else if (snapAxis === 'z') {
-            pointPos.x = lastPt.x;
-            pointPos.y = lastPt.y;
-          }
-        }
-        addMeasurementPoint(pointPos);
-        snapAxis = null;
-      }
+      placeMeasurementPoint();
     }
   };
 
-  // Arrow keys => snap axis, backspace => remove last, enter => finalize
-  window.addEventListener('keydown', (evt) => {
-    if (!isPointerLocked) return;
-
-    if (evt.code.startsWith('Arrow')) {
-      switch (evt.code) {
-        case 'ArrowUp':
-        case 'ArrowDown': snapAxis = 'y'; break;
-        case 'ArrowLeft': snapAxis = 'x'; break;
-        case 'ArrowRight': snapAxis = 'z'; break;
+  // Function to place a measurement point at the exact crosshair position
+  function placeMeasurementPoint() {
+    // Use a properly constructed ray
+    const ray = new BABYLON.Ray(
+      camera.position, 
+      camera.getDirection(BABYLON.Vector3.Forward()),
+      100 // Max length
+    );
+    
+    // Get all hits along the ray to find the closest valid one
+    const hits = scene.multiPickWithRay(ray, (mesh) => {
+      // Only pick meshes that are visible, pickable, and not our measurement objects
+      return mesh.isVisible && 
+             mesh.isPickable !== false && 
+             mesh.isEnabled() && 
+             !measurementPoints.includes(mesh) && 
+             mesh !== currentPreviewLine;
+    });
+    
+    // Sort by distance to get the closest hit
+    if (hits && hits.length > 0) {
+      // Sort based on distance (closest first)
+      hits.sort((a, b) => a.distance - b.distance);
+      
+      const closestHit = hits[0];
+      let pointPos = closestHit.pickedPoint.clone();
+      
+      // Debug visual to verify hit position
+      console.log("Placing point at:", pointPos.toString());
+      
+      // snap axis
+      if (snapAxis && activePoints.length > 0) {
+        const lastPt = activePoints[activePoints.length - 1];
+        if (snapAxis === 'x') {
+          pointPos.y = lastPt.y;
+          pointPos.z = lastPt.z;
+        } else if (snapAxis === 'y') {
+          pointPos.x = lastPt.x;
+          pointPos.z = lastPt.z;
+        } else if (snapAxis === 'z') {
+          pointPos.x = lastPt.x;
+          pointPos.y = lastPt.y;
+        }
       }
-      evt.preventDefault();
-      return;
+      
+      addMeasurementPoint(pointPos);
+      snapAxis = null;
     }
-
-    if (evt.code === 'Backspace' || evt.code === 'Delete') {
-      removeLastMeasurementPoint();
-      evt.preventDefault();
-      return;
-    }
-
-    if (evt.code === 'Enter' || evt.code === 'KeyR') {
-      if (activePoints.length > 1) {
-        completeMeasurement();
-      } else {
-        cancelMeasurement();
-      }
-      evt.preventDefault();
-      return;
-    }
-  });
+  }
 
   // Each frame, update the preview line if we have an active measurement
   scene.onBeforeRenderObservable.add(() => {
     if (activePoints.length === 0) return;
 
-    // Ray pick from center screen
-    const pick = scene.pick(
-      engine.getRenderWidth()/2,
-      engine.getRenderHeight()/2,
-      (mesh) => mesh.isPickable !== false
+    // Create ray from camera position in forward direction
+    const ray = new BABYLON.Ray(
+      camera.position, 
+      camera.getDirection(BABYLON.Vector3.Forward()),
+      100 // Reasonable length
     );
-
+    
+    // Get all hits and find the closest valid one
+    const hits = scene.multiPickWithRay(ray, (mesh) => {
+      return mesh.isVisible && 
+             mesh.isPickable !== false && 
+             mesh.isEnabled() && 
+             !measurementPoints.includes(mesh) && 
+             mesh !== currentPreviewLine;
+    });
+    
     let previewPos = null;
     const lastPt = activePoints[activePoints.length - 1];
 
-    if (pick?.hit) {
-      previewPos = pick.pickedPoint.clone();
+    if (hits && hits.length > 0) {
+      // Sort by distance to get closest hit
+      hits.sort((a, b) => a.distance - b.distance);
+      previewPos = hits[0].pickedPoint.clone();
 
       // snap axis if needed
       if (snapAxis === 'x') {
@@ -499,14 +509,16 @@
       }
     }
 
-    activePoints.push(pos);
+    activePoints.push(pos.clone()); // Ensure we clone the position
 
     // Create a small white sphere
     const sphere = BABYLON.MeshBuilder.CreateSphere("refPoint",{diameter:0.1}, scene);
     sphere.position = pos.clone();
     const smat = new BABYLON.StandardMaterial("refMat", scene);
     smat.diffuseColor = BABYLON.Color3.White();
+    smat.emissiveColor = BABYLON.Color3.White().scale(0.5); // Make it glow slightly
     sphere.material = smat;
+    sphere.isPickable = false; // Don't let reference points interfere with picking
     measurementPoints.push(sphere);
 
     // If there's at least 1 existing point, create a line segment
