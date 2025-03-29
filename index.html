@@ -183,64 +183,47 @@
 
         async function loadSplatFile(file) {
             try {
-                const url = URL.createObjectURL(file);
                 const fileName = file.name.toLowerCase();
-                
                 initSplatViewer();
                 progressBar.style.display = 'block';
                 updateProgressBar(0);
                 
+                // Read file as ArrayBuffer
+                const arrayBuffer = await file.arrayBuffer();
+                
+                // Determine file format based on extension
+                let fileFormat;
                 if (fileName.endsWith('.spz')) {
-                    // Get the SpzLoader class
-                    const SpzLoader = GaussianSplats3D.SpzLoader;
-                    if (!SpzLoader) {
-                        throw new Error('SpzLoader not found. Make sure you are using gaussian-splats-3d version 0.4.7 or later.');
-                    }
-                    
-                    // Configure loading parameters
-                    const splatAlphaRemovalThreshold = 0.1;
-                    const inMemoryCompressionLevel = 2;
-                    const optimizeSplatData = true;
-                    const sphericalHarmonicsDegree = 3;
-                    
-                    // Progress callback
-                    const onProgress = (progress) => {
-                        console.log(`Loading progress: ${progress * 100}%`);
-                        updateProgressBar(progress * 100);
-                    };
-                    
-                    // Load the SPZ file and get a splatBuffer
-                    const splatBuffer = await SpzLoader.loadFromURL(
-                        url,
-                        onProgress,
-                        splatAlphaRemovalThreshold,
-                        inMemoryCompressionLevel,
-                        optimizeSplatData,
-                        sphericalHarmonicsDegree
-                    );
-                    
-                    // Add the loaded splat buffer to the viewer
-                    await splatViewer.addSplatBuffers([splatBuffer], {
-                        position: [0, 1, 0],
-                        rotation: [0, 0, 0, 1],
-                        scale: [1, 1, 1]
-                    });
-                    
-                    console.log('SPZ file loaded successfully and added to scene');
+                    fileFormat = 'spz';
                 } else if (fileName.endsWith('.ply')) {
-                    // For PLY files, use standard approach with the viewer
-                    const options = {
-                        position: [0, 1, 0],
-                        rotation: [0, 0, 0, 1],
-                        scale: [1, 1, 1],
-                        onProgress: (progress) => {
-                            updateProgressBar(progress * 100);
-                        }
-                    };
-                    
-                    await splatViewer.addSplatScene(url, options);
+                    fileFormat = 'ply';
+                } else {
+                    throw new Error('Unsupported file extension');
                 }
                 
+                // Prepare common options
+                const options = {
+                    position: [0, 1, 0],
+                    rotation: [0, 0, 0, 1],
+                    scale: [1, 1, 1],
+                    onProgress: (progress) => {
+                        console.log(`Loading progress: ${progress * 100}%`);
+                        updateProgressBar(Math.min(progress * 100, 100));
+                    }
+                };
+                
+                // Create a proper scene definition object that the library can understand
+                const sceneDefinition = {
+                    path: fileFormat === 'spz' ? 'dummy.spz' : 'dummy.ply', // Ensure this is a string
+                    data: arrayBuffer,
+                    format: fileFormat, // Explicitly state the format
+                    id: `splat-${Date.now()}` // Generate a unique ID
+                };
+                
+                // Pass the scene definition to the library
+                await splatViewer.addSplatScene(sceneDefinition, options);
+                
+                console.log(`${fileName} loaded successfully and added to scene`);
                 splatViewer.start();
                 updateProgressBar(100);
             } catch (err) {
