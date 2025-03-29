@@ -48,7 +48,7 @@
         {
             "imports": {
                 "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "gaussian-splats-3d": "./node_modules/@mkkellogg/gaussian-splats-3d/build/gaussian-splats-3d.module.js"
+                "gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
             }
         }
     </script>
@@ -137,19 +137,103 @@
             });
         }
 
+        // Add a loading progress indicator
+        function createProgressBar() {
+            const progressContainer = document.createElement('div');
+            progressContainer.className = 'fixed top-5 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-70 p-3 rounded text-white z-50';
+            progressContainer.id = 'loading-progress';
+            
+            const progressText = document.createElement('div');
+            progressText.className = 'text-center mb-2';
+            progressText.textContent = 'Loading...';
+            
+            const progressBarOuter = document.createElement('div');
+            progressBarOuter.className = 'w-64 h-4 bg-gray-700 rounded overflow-hidden';
+            
+            const progressBarInner = document.createElement('div');
+            progressBarInner.className = 'h-full bg-blue-500 transition-all duration-300 ease-out';
+            progressBarInner.style.width = '0%';
+            progressBarInner.id = 'progress-bar-inner';
+            
+            progressBarOuter.appendChild(progressBarInner);
+            progressContainer.appendChild(progressText);
+            progressContainer.appendChild(progressBarOuter);
+            
+            document.body.appendChild(progressContainer);
+            progressContainer.style.display = 'none';
+            
+            return progressContainer;
+        }
+
+        const progressBar = createProgressBar();
+
+        function updateProgressBar(percent) {
+            const progressInner = document.getElementById('progress-bar-inner');
+            if (progressInner) {
+                progressInner.style.width = `${percent}%`;
+            }
+            if (percent >= 100) {
+                setTimeout(() => {
+                    progressBar.style.display = 'none';
+                }, 500);
+            } else if (progressBar.style.display === 'none') {
+                progressBar.style.display = 'block';
+            }
+        }
+
         async function loadSplatFile(file) {
             try {
-                initSplatViewer();
                 const url = URL.createObjectURL(file);
-                await splatViewer.addSplatScene(url, {
-                    showLoadingUI: true,
-                    position: [0, 1, 0],
-                    rotation: [0, 0, 0, 1],
-                    scale: [1, 1, 1]
-                });
+                const fileName = file.name.toLowerCase();
+                
+                initSplatViewer();
+                progressBar.style.display = 'block';
+                updateProgressBar(0);
+                
+                if (fileName.endsWith('.spz')) {
+                    // For SPZ files: Use the fetch API to get the binary data
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    
+                    const arrayBuffer = await response.arrayBuffer();
+                    
+                    // Create a scene with the binary data
+                    await splatViewer.addSplatScene({
+                        url, // Still include the URL for format detection
+                        buffer: arrayBuffer, // Provide the raw buffer data
+                        format: 'spz', // Explicitly specify SPZ format
+                        position: [0, 1, 0],
+                        rotation: [0, 0, 0, 1],
+                        scale: [1, 1, 1],
+                        onProgress: (progress) => {
+                            console.log(`Loading progress: ${progress * 100}%`);
+                            updateProgressBar(progress * 100);
+                        }
+                    });
+                    
+                    console.log('SPZ file loaded successfully and added to scene');
+                } else if (fileName.endsWith('.ply')) {
+                    // For PLY files, use standard approach
+                    await splatViewer.addSplatScene({
+                        url,
+                        format: 'ply',
+                        position: [0, 1, 0],
+                        rotation: [0, 0, 0, 1],
+                        scale: [1, 1, 1],
+                        onProgress: (progress) => {
+                            updateProgressBar(progress * 100);
+                        }
+                    });
+                }
+                
                 splatViewer.start();
+                updateProgressBar(100);
             } catch (err) {
-                showSplatError('Failed to load file: ' + err);
+                console.error('Error loading file:', err);
+                showSplatError(`Failed to load file: ${err.message || 'Unknown error'}`);
+                progressBar.style.display = 'none';
             }
         }
 
