@@ -33,10 +33,15 @@
         Double-click label: Edit reference
     </div>
 
-    <!-- Drop area for .spz files -->
+    <!-- File Upload Area for .spz and .ply files -->
     <div id="splats-dropzone" class="absolute top-20 left-2.5 bg-black bg-opacity-50 p-2.5 text-white rounded">
-        Drag & drop .spz files here
-        <div id="splatsError" class="text-red-400 hidden"></div>
+        <div class="text-center mb-2">Drag & drop or select files</div>
+        <div class="flex flex-col items-center gap-2">
+            <button id="select-file-btn" class="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded w-full">Select File</button>
+            <input type="file" id="file-input" accept=".spz,.ply" class="hidden">
+            <div class="text-xs italic">Supported: .spz, .ply files</div>
+        </div>
+        <div id="splatsError" class="text-red-400 hidden mt-2"></div>
     </div>
 
     <script type="importmap">
@@ -144,7 +149,7 @@
                 });
                 splatViewer.start();
             } catch (err) {
-                showSplatError('Failed to load splat: ' + err);
+                showSplatError('Failed to load file: ' + err);
             }
         }
 
@@ -154,20 +159,51 @@
             errDiv.classList.remove('hidden');
         }
 
+        // Set up the file button click handler
+        document.getElementById('select-file-btn').addEventListener('click', () => {
+            document.getElementById('file-input').click();
+        });
+
+        // Handle file input selection
+        document.getElementById('file-input').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            document.getElementById('splatsError').classList.add('hidden');
+            const name = file.name.toLowerCase();
+            
+            if (name.endsWith('.spz') || name.endsWith('.ply')) {
+                loadSplatFile(file);
+            } else {
+                showSplatError('Unsupported file type. Please select a .spz or .ply file.');
+            }
+        });
+
+        // Set up drag and drop handlers
         const dropzone = document.getElementById('splats-dropzone');
         dropzone.addEventListener('dragover', (event) => {
             event.preventDefault();
+            dropzone.classList.add('bg-opacity-70');
         });
+        
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('bg-opacity-70');
+        });
+        
         dropzone.addEventListener('drop', (event) => {
             event.preventDefault();
+            dropzone.classList.remove('bg-opacity-70');
+            
             const file = event.dataTransfer.files[0];
             if (!file) return;
+            
             document.getElementById('splatsError').classList.add('hidden');
             const name = file.name.toLowerCase();
-            if (name.endsWith('.spz')) {
+            
+            if (name.endsWith('.spz') || name.endsWith('.ply')) {
                 loadSplatFile(file);
             } else {
-                showSplatError('Unsupported file type. Please drop a .spz file.');
+                showSplatError('Unsupported file type. Please drop a .spz or .ply file.');
             }
         });
 
