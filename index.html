@@ -188,10 +188,8 @@
                 progressBar.style.display = 'block';
                 updateProgressBar(0);
                 
-                // Read file as ArrayBuffer
                 const arrayBuffer = await file.arrayBuffer();
                 
-                // Determine file format based on extension
                 let fileFormat;
                 if (fileName.endsWith('.spz')) {
                     fileFormat = 'spz';
@@ -201,27 +199,40 @@
                     throw new Error('Unsupported file extension');
                 }
                 
-                // Prepare common options
+                // Common options for all formats
                 const options = {
+                    splatAlphaRemovalThreshold: 5,
                     position: [0, 1, 0],
                     rotation: [0, 0, 0, 1],
-                    scale: [1, 1, 1],
+                    scale: [1.5, 1.5, 1.5],
                     onProgress: (progress) => {
-                        console.log(`Loading progress: ${progress * 100}%`);
                         updateProgressBar(Math.min(progress * 100, 100));
                     }
                 };
-                
-                // Create a proper scene definition object that the library can understand
-                const sceneDefinition = {
-                    path: fileFormat === 'spz' ? 'dummy.spz' : 'dummy.ply', // Ensure this is a string
-                    data: arrayBuffer,
-                    format: fileFormat, // Explicitly state the format
-                    id: `splat-${Date.now()}` // Generate a unique ID
-                };
-                
-                // Pass the scene definition to the library
-                await splatViewer.addSplatScene(sceneDefinition, options);
+
+                // Load the file using the proper method for each format
+                if (fileFormat === 'spz') {
+                    const spzModel = new GaussianSplats3D.SpzModel();
+                    await spzModel.loadSpz(arrayBuffer);
+                    splatViewer.addModel(spzModel);
+                } else if (fileFormat === 'ply') {
+                    // For PLY files, create a blob URL and use the SplatLoader class
+                    const blob = new Blob([arrayBuffer]);
+                    const blobUrl = URL.createObjectURL(blob);
+                    
+                    // Create a new SplatLoader instance
+                    const splatLoader = new GaussianSplats3D.SplatLoader();
+                    
+                    // Load and create the model
+                    const splatData = await splatLoader.loadFromURL(blobUrl, 'ply');
+                    const splatModel = new GaussianSplats3D.SplatModel(splatData);
+                    
+                    // Add the model to the viewer
+                    splatViewer.addModel(splatModel);
+                    
+                    // Clean up the blob URL after loading
+                    URL.revokeObjectURL(blobUrl);
+                }
                 
                 console.log(`${fileName} loaded successfully and added to scene`);
                 splatViewer.start();
