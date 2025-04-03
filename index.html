@@ -188,6 +188,15 @@
                 progressBar.style.display = 'block';
                 updateProgressBar(0);
                 
+                // Log available methods for debugging
+                console.log('GaussianSplats3D API:', {
+                    availableMethods: Object.getOwnPropertyNames(GaussianSplats3D),
+                    SplatLoader: GaussianSplats3D.SplatLoader ? {
+                        isConstructor: typeof GaussianSplats3D.SplatLoader === 'function',
+                        staticMethods: Object.getOwnPropertyNames(GaussianSplats3D.SplatLoader)
+                    } : 'Not available'
+                });
+                
                 const arrayBuffer = await file.arrayBuffer();
                 
                 let fileFormat;
@@ -216,19 +225,32 @@
                     await spzModel.loadSpz(arrayBuffer);
                     splatViewer.addModel(spzModel);
                 } else if (fileFormat === 'ply') {
-                    // For PLY files, create a blob URL and use the SplatLoader class
+                    // For PLY files, create a blob URL
                     const blob = new Blob([arrayBuffer]);
                     const blobUrl = URL.createObjectURL(blob);
                     
-                    // Create a new SplatLoader instance
-                    const splatLoader = new GaussianSplats3D.SplatLoader();
+                    // Use the static loadFromURL method directly instead of creating an instance
+                    console.log('Using SplatLoader.loadFromURL static method for PLY loading');
                     
-                    // Load and create the model
-                    const splatData = await splatLoader.loadFromURL(blobUrl, 'ply');
-                    const splatModel = new GaussianSplats3D.SplatModel(splatData);
-                    
-                    // Add the model to the viewer
-                    splatViewer.addModel(splatModel);
+                    try {
+                        // From the logs, we can see loadFromURL is available as a static method
+                        const splatData = await GaussianSplats3D.SplatLoader.loadFromURL(
+                            blobUrl, 
+                            (progress) => {
+                                updateProgressBar(Math.min(progress * 100, 100));
+                            }
+                        );
+                        
+                        console.log('PLY data loaded successfully, creating SplatModel');
+                        const splatModel = new GaussianSplats3D.SplatModel(splatData);
+                        splatViewer.addModel(splatModel);
+                        console.log('Model added to viewer');
+                        
+                    } catch (innerError) {
+                        console.error('Detailed error when loading PLY:', innerError);
+                        console.log('Error stack:', innerError.stack);
+                        throw innerError;
+                    }
                     
                     // Clean up the blob URL after loading
                     URL.revokeObjectURL(blobUrl);
@@ -239,6 +261,7 @@
                 updateProgressBar(100);
             } catch (err) {
                 console.error('Error loading file:', err);
+                console.log('Error stack:', err.stack);
                 showSplatError(`Failed to load file: ${err.message || 'Unknown error'}`);
                 progressBar.style.display = 'none';
             }
