@@ -56,6 +56,12 @@
     <script type="module">
         import * as THREE from 'three';
         import * as GaussianSplats3D from 'gaussian-splats-3d';
+
+        // Disable SharedArrayBuffer usage if we're not cross-origin isolated
+        if (!self.crossOriginIsolated && GaussianSplats3D.SplatLoader) {
+            GaussianSplats3D.SplatLoader.disableWorkers = true;
+        }
+
         // --- Configuration ---
         const config = {
             initialCameraDistance: 5,
@@ -191,10 +197,8 @@
                 // Log available methods for debugging
                 console.log('GaussianSplats3D API:', {
                     availableMethods: Object.getOwnPropertyNames(GaussianSplats3D),
-                    SplatLoader: GaussianSplats3D.SplatLoader ? {
-                        isConstructor: typeof GaussianSplats3D.SplatLoader === 'function',
-                        staticMethods: Object.getOwnPropertyNames(GaussianSplats3D.SplatLoader)
-                    } : 'Not available'
+                    availableClasses: Object.keys(GaussianSplats3D),
+                    SpzModel: GaussianSplats3D.SpzModel ? 'Available' : 'Not available'
                 });
                 
                 const arrayBuffer = await file.arrayBuffer();
@@ -229,11 +233,11 @@
                     const blob = new Blob([arrayBuffer]);
                     const blobUrl = URL.createObjectURL(blob);
                     
-                    // Use the static loadFromURL method directly instead of creating an instance
+                    // Use the static loadFromURL method directly
                     console.log('Using SplatLoader.loadFromURL static method for PLY loading');
                     
                     try {
-                        // From the logs, we can see loadFromURL is available as a static method
+                        // From the logs, we see loadFromURL is available as a static method
                         const splatData = await GaussianSplats3D.SplatLoader.loadFromURL(
                             blobUrl, 
                             (progress) => {
@@ -241,10 +245,16 @@
                             }
                         );
                         
-                        console.log('PLY data loaded successfully, creating SplatModel');
-                        const splatModel = new GaussianSplats3D.SplatModel(splatData);
-                        splatViewer.addModel(splatModel);
-                        console.log('Model added to viewer');
+                        console.log('PLY data loaded successfully:', splatData);
+                        console.log('Available model types:', {
+                            modelClasses: Object.keys(GaussianSplats3D).filter(key => key.includes('Model')),
+                            splatModelType: typeof GaussianSplats3D.SplatModel
+                        });
+                        
+                        // For PLY files, we need to directly add the data to the viewer
+                        // rather than constructing a model first
+                        console.log('Adding PLY data directly to viewer');
+                        splatViewer.addSplatBuffers([splatData]);
                         
                     } catch (innerError) {
                         console.error('Detailed error when loading PLY:', innerError);
