@@ -57,6 +57,16 @@
         import * as THREE from 'three';
         import * as GaussianSplats3D from 'gaussian-splats-3d';
 
+        // Force-disable workers if crossOriginIsolated is false
+        if (!self.crossOriginIsolated) {
+            if (GaussianSplats3D.SplatLoader) {
+                GaussianSplats3D.SplatLoader.disableWorkers = true;
+            }
+            if (GaussianSplats3D.SpzModel) {
+                GaussianSplats3D.SpzModel.disableWorkers = true;
+            }
+        }
+
         // Disable SharedArrayBuffer usage if we're not cross-origin isolated
         if (!self.crossOriginIsolated && GaussianSplats3D.SplatLoader) {
             GaussianSplats3D.SplatLoader.disableWorkers = true;
