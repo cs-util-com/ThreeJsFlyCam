@@ -1,860 +1,1350 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Babylon.js Fly + Gaussian Splats + Measurements</title>
-
-  <!-- Tailwind for UI styling -->
-  <script src="https://cdn.tailwindcss.com"></script>
-
-  <!-- Babylon.js 8 + Loaders (ensures .ply, .splat, .spz can be imported) -->
-  <script src="https://cdn.babylonjs.com/babylon.max.js"></script>
-  <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.js"></script>
-
-  <style>
-    canvas {
-      width: 100%;
-      height: 100vh;
-      display: block;
-      outline: none;
-      touch-action: none;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=width=device-width, initial-scale=1.0">
+    <title>3D Fly Navigation - Three.js</title>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="m-0 overflow-hidden bg-gray-800">
-
-<!-- ---------------
-     UI Overlays 
-     --------------->
-<div id="instructions" class="absolute top-2.5 left-2.5 text-white font-sans bg-black bg-opacity-50 p-2.5 rounded">
-  Click to start navigation<br/>
-  WASD: Move<br/>
-  Shift: Speed Boost<br/>
-  Mouse: Look<br/>
-  ESC: Release Mouse<br/>
-  Left-click: Place measurement point<br/>
-  Enter: Complete current measurement
-</div>
-
-<div id="crosshair"
-     class="absolute top-1/2 left-1/2 w-0.5 h-0.5 bg-white rounded-full
-            transform -translate-x-1/2 -translate-y-1/2
-            pointer-events-none hidden">
-</div>
-
-<!-- Measurement UI -->
-<div id="measurement-controls" class="absolute bottom-2.5 left-2.5 text-white font-sans flex gap-2">
-  <button id="clearPoints" class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded">
-    Clear Reference Points
-  </button>
-  <button id="clearMeasurements" class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded">
-    Clear Measurements
-  </button>
-</div>
-
-<div id="measurement-instructions"
-     class="absolute top-2.5 right-2.5 text-white font-sans bg-black bg-opacity-50 p-2.5 rounded">
-  <strong>Measurement Controls</strong><br/>
-  Left-click: Place point<br/>
-  Arrow keys: Snap to axis<br/>
-  Backspace/Del: Remove last point<br/>
-  Enter/R: Complete measurement<br/>
-  Double-click label: Edit reference<br/>
-  (Close polygon by placing new point near the first point)
-</div>
-
-<!-- Splat / PLY / SPZ file upload -->
-<div id="splats-dropzone"
-     class="absolute top-20 left-2.5 bg-black bg-opacity-50 p-2.5 text-white rounded">
-  <div class="text-center mb-2">Drag &amp; drop or select files</div>
-  <div class="flex flex-col items-center gap-2">
-    <button id="select-file-btn" class="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded w-full">
-      Select File
-    </button>
-    <input type="file" id="file-input" accept=".spz,.ply,.splat" class="hidden" />
-    <div class="text-xs italic">Supported: .spz, .ply, .splat</div>
-  </div>
-  <div id="splatsError" class="text-red-400 hidden mt-2"></div>
-</div>
-
-<script type="module">
-  /*********************************************************
-   *   Babylon.js 8 Scene Setup
-   *********************************************************/
-  const canvas = document.createElement('canvas');
-  document.body.appendChild(canvas);
-  canvas.style.width = '100%';
-  canvas.style.height = '100vh';
-  canvas.style.display = 'block';
-  canvas.style.touchAction = 'none';
-
-  // Create Engine and Scene - simplified approach
-  const engine = new BABYLON.Engine(canvas, true, { adaptToDeviceRatio: true });
-  const scene = new BABYLON.Scene(engine);
-  
-  // Fog & background color
-  scene.clearColor = new BABYLON.Color4(0.21, 0.24, 0.74, 1);
-  scene.fogMode = BABYLON.Scene.FOGMODE_EXP;
-  scene.fogDensity = 0.003;
-  scene.fogColor = new BABYLON.Color3(0.53, 0.78, 0.93);
-
-  // Camera setup - keep the fly camera behavior
-  const camera = new BABYLON.UniversalCamera("Camera", new BABYLON.Vector3(0, 2, -5), scene);
-  camera.fov = 1.1;
-  camera.minZ = 0.05;
-  camera.speed = 0.5;
-  camera.angularSensibility = 2000;
-  scene.activeCamera = camera;
-  camera.attachControl(canvas, false);
-
-  // Basic lighting
-  const light1 = new BABYLON.HemisphericLight("HemiLight", new BABYLON.Vector3(0,1,0), scene);
-  light1.intensity = 0.8;
-
-  // For toggling pointer lock
-  let isPointerLocked = false;
-  const crosshairEl = document.getElementById('crosshair');
-  const instructionsEl = document.getElementById('instructions');
-
-  // Listen for pointer lock changes
-  document.addEventListener('pointerlockchange', onPointerLockChange, false);
-  function onPointerLockChange() {
-    const locked = (document.pointerLockElement === canvas);
-    isPointerLocked = locked;
-    crosshairEl.style.display    = locked ? 'block' : 'none';
-    instructionsEl.style.display = locked ? 'none'  : 'block';
-  }
-
-  // If user presses ESC while locked => exit pointer lock
-  document.addEventListener('keydown', (evt) => {
-    if (evt.code === 'Escape' && isPointerLocked) {
-      document.exitPointerLock();
-    }
-  });
-
-  // Manual movement states for WASD + shift
-  const moveState = { forward: 0, right: 0, shift: false };
-  window.addEventListener('keydown', (evt) => {
-    if (!isPointerLocked) return;
-    switch (evt.code) {
-      case 'KeyW': moveState.forward = +1; break;
-      case 'KeyS': moveState.forward = -1; break;
-      case 'KeyA': moveState.right   = -1; break;
-      case 'KeyD': moveState.right   = +1; break;
-      case 'ShiftLeft':
-      case 'ShiftRight': moveState.shift = true; break;
-    }
-    evt.preventDefault();
-  });
-  window.addEventListener('keyup', (evt) => {
-    switch (evt.code) {
-      case 'KeyW':
-      case 'KeyS': moveState.forward = 0; break;
-      case 'KeyA':
-      case 'KeyD': moveState.right   = 0; break;
-      case 'ShiftLeft':
-      case 'ShiftRight': moveState.shift = false; break;
-    }
-  });
-
-  // On click => if not locked, request pointer lock
-  canvas.addEventListener('click', () => {
-    if (!isPointerLocked) {
-      canvas.requestPointerLock();
-    }
-  });
-
-  /*********************************************************
-   *   Main Render Loop
-   *********************************************************/
-  engine.runRenderLoop(() => {
-    const deltaTime = scene.getEngine().getDeltaTime() * 0.001;
-
-    // Move camera (fly) based on WASD + shift
-    let actualSpeed = camera.speed * (moveState.shift ? 3.0 : 1.0);
-    if (moveState.forward !== 0) {
-      camera.position.addInPlace(camera.getDirection(BABYLON.Vector3.Forward())
-                       .scale(moveState.forward * actualSpeed * deltaTime));
-    }
-    if (moveState.right !== 0) {
-      camera.position.addInPlace(camera.getDirection(BABYLON.Vector3.Right())
-                       .scale(moveState.right * actualSpeed * deltaTime));
-    }
-    scene.render();
-  });
-
-  // Handle window resize
-  window.addEventListener('resize', () => {
-    engine.resize();
-    canvas.style.width = '100%';
-    canvas.style.height = '100vh';
-  });
-
-  // Create a ground + test objects - simplified
-  createTestEnvironment();
-  function createTestEnvironment(){
+    <div id="instructions" class="absolute top-2.5 left-2.5 text-white font-sans bg-black bg-opacity-50 p-2.5 rounded">
+        Click to start navigation<br/>
+        WASD: Move<br/>
+        Shift: Speed Boost<br/>
+        Mouse: Look<br/>
+        ESC: Release Mouse<br/>
+        Left-click: Place measurement point<br/>
+        Enter: Complete current measurement
+    </div>
+    <div id="crosshair" class="absolute top-1/2 left-1/2 w-0.5 h-0.5 bg-white rounded-full transform -translate-x-1/2 -translate-y-1/2 pointer-events-none hidden"></div>
     
-
-    const box = BABYLON.MeshBuilder.CreateBox("box",{size:2}, scene);
-    box.position.set(8,1,0);
-    box.material = new BABYLON.StandardMaterial("boxMat", scene);
-    box.material.diffuseColor = BABYLON.Color3.Red();
-    box.isPickable = true;
-
-    const sphere = BABYLON.MeshBuilder.CreateSphere("sphere",{diameter:3}, scene);
-    sphere.position.set(-8,1.5,-5);
-    sphere.material = new BABYLON.StandardMaterial("sphereMat", scene);
-    sphere.material.diffuseColor = BABYLON.Color3.Blue();
-    sphere.isPickable = true;
-  }
-
-  /*********************************************************
-   *   Gaussian Splatting - Simplified Loading with built-in UI
-   *********************************************************/
-  const splatsErrorEl = document.getElementById('splatsError');
-  const selectFileBtn = document.getElementById('select-file-btn');
-  const fileInput     = document.getElementById('file-input');
-  const dropZone      = document.getElementById('splats-dropzone');
-
-  selectFileBtn.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-    handleLoadSplatFile(file);
-  });
-
-  dropZone.addEventListener('dragover', (ev) => {
-    ev.preventDefault();
-    dropZone.classList.add('bg-opacity-70');
-  });
-  dropZone.addEventListener('dragleave', () => {
-    dropZone.classList.remove('bg-opacity-70');
-  });
-  dropZone.addEventListener('drop', (ev) => {
-    ev.preventDefault();
-    dropZone.classList.remove('bg-opacity-70');
-    const file = ev.dataTransfer.files[0];
-    if (file) handleLoadSplatFile(file);
-  });
-
-  async function handleLoadSplatFile(file) {
-    splatsErrorEl.classList.add('hidden');
-    const name = file.name.toLowerCase();
-    if (!(name.endsWith('.spz') || name.endsWith('.ply') || name.endsWith('.splat'))) {
-      showSplatError('Unsupported file type. Please use .spz, .ply, or .splat');
-      return;
-    }
-
-    // Use Babylon's built-in loading UI
-    engine.displayLoadingUI();
-
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const blob = new Blob([arrayBuffer]);
-      const blobURL = URL.createObjectURL(blob);
-
-      // Simplified loading approach
-      await BABYLON.SceneLoader.ImportMeshAsync("", blobURL, "", scene);
-      
-      engine.hideLoadingUI();
-      URL.revokeObjectURL(blobURL);
-      console.log(name, "loaded successfully as Gaussian Splats");
-    } catch (err) {
-      console.error("Error loading file:", err);
-      showSplatError(`Failed to load file: ${err.message || 'Unknown error'}`);
-      engine.hideLoadingUI();
-    }
-  }
-
-  function showSplatError(msg) {
-    splatsErrorEl.innerText = msg;
-    splatsErrorEl.classList.remove('hidden');
-  }
-
-  // You can load a default splat if desired
-  
-  engine.displayLoadingUI();
-  BABYLON.SceneLoader.ImportMeshAsync(
-    "", 
-    "https://raw.githubusercontent.com/CedricGuillemet/dump/master/racoonfamily.spz", 
-    "", 
-    scene
-  ).then(() => {
-    engine.hideLoadingUI();
-  });
-  
-
-  /*********************************************************
-   *   Measurement Tools (Points, Lines, Labels)
-   *   with Loop Closure + Area + Full Scale Factor Update
-   *********************************************************/
-  const measurementInstructions = document.getElementById('measurement-instructions');
-  measurementInstructions.classList.remove('hidden');
-
-  // Arrays for all lines, points, labels we create
-  let measurementLines = [];   // store { lineMesh, userData:{start, end, originalDistance} }
-  let measurementLabels = [];  // store { labelMesh, userData:{type, ...} } – type can be "distance", "total", or "area"
-  let measurementPoints = [];  // reference point spheres
-
-  // Active state for the "currently in-progress" measurement
-  let activePoints = [];
-  let currentPreviewLine = null;
-  let currentPreviewLabel = null;
-  let currentLineColor = BABYLON.Color3.White();
-  let colorIndex = 0;
-
-  // Snap axis
-  let snapAxis = null;
-
-  // Global scale factor (user can override by editing a label)
-  let globalScaleFactor = 1;
-  let measurementUnit = "m"; // Default unit
-
-  // Pastel color set
-  const pastelColors = [
-    "#98DDCA", "#FFAEBC", "#FFD6A5", "#BBDEFB",
-    "#D0F0C0", "#F4C2C2", "#CCCCFF", "#F8C8DC",
-    "#FDFD96", "#BDECB6"
-  ];
-
-  // Set up UI buttons
-  document.getElementById('clearPoints').addEventListener('click', () => {
-    if (confirm('Are you sure you want to clear all reference points?')) {
-      clearReferencePoints();
-    }
-  });
-  document.getElementById('clearMeasurements').addEventListener('click', () => {
-    if (confirm('Are you sure you want to clear all measurements?')) {
-      clearAllMeasurements();
-    }
-  });
-
-  // Start new measurement right away
-  startNewMeasurement();
-
-  // On pointer down => place or request pointer lock
-  scene.onPointerDown = (evt, pickResult) => {
-    // If not locked, we request it
-    if (!isPointerLocked) {
-      canvas.requestPointerLock();
-      return;
-    }
-
-    // If locked, left-click => place measurement point
-    if (evt.button === 0) {
-      placeMeasurementPoint();
-    }
-  };
-
-  // Function to place a measurement point at the exact crosshair position
-  function placeMeasurementPoint() {
-    // Use a properly constructed ray
-    const ray = new BABYLON.Ray(
-      camera.position, 
-      camera.getDirection(BABYLON.Vector3.Forward()),
-      100 // Max length
-    );
+    <!-- Measurement Tool UI -->
+    <div id="measurement-controls" class="absolute bottom-2.5 left-2.5 text-white font-sans flex gap-2">
+        <button id="clearPoints" class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded">Clear Reference Points</button>
+        <button id="clearMeasurements" class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded">Clear Measurements</button>
+    </div>
     
-    // Get all hits along the ray to find the closest valid one
-    const hits = scene.multiPickWithRay(ray, (mesh) => {
-      // Only pick meshes that are visible, pickable, and not our measurement objects
-      return mesh.isVisible && 
-             mesh.isPickable !== false && 
-             mesh.isEnabled() && 
-             !measurementPoints.includes(mesh) && 
-             mesh !== currentPreviewLine;
-    });
-    
-    // Sort by distance to get the closest hit
-    if (hits && hits.length > 0) {
-      // Sort based on distance (closest first)
-      hits.sort((a, b) => a.distance - b.distance);
-      
-      const closestHit = hits[0];
-      let pointPos = closestHit.pickedPoint.clone();
-      
-      // Debug visual to verify hit position
-      console.log("Placing point at:", pointPos.toString());
-      
-      // snap axis
-      if (snapAxis && activePoints.length > 0) {
-        const lastPt = activePoints[activePoints.length - 1];
-        if (snapAxis === 'x') {
-          pointPos.y = lastPt.y;
-          pointPos.z = lastPt.z;
-        } else if (snapAxis === 'y') {
-          pointPos.x = lastPt.x;
-          pointPos.z = lastPt.z;
-        } else if (snapAxis === 'z') {
-          pointPos.x = lastPt.x;
-          pointPos.y = lastPt.y;
+    <div id="measurement-instructions" class="absolute top-2.5 right-2.5 text-white font-sans bg-black bg-opacity-50 p-2.5 rounded">
+        <strong>Measurement Controls</strong><br/>
+        Left-click: Place point<br/>
+        Arrow keys: Snap to axis<br/>
+        Backspace/Del: Remove last point<br/>
+        Enter/R: Complete measurement<br/>
+        Double-click label: Edit reference
+    </div>
+
+    <!-- File Upload Area for .spz and .ply files -->
+    <div id="splats-dropzone" class="absolute top-20 left-2.5 bg-black bg-opacity-50 p-2.5 text-white rounded">
+        <div class="text-center mb-2">Drag & drop or select files</div>
+        <div class="flex flex-col items-center gap-2">
+            <button id="select-file-btn" class="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded w-full">Select File</button>
+            <input type="file" id="file-input" accept=".spz,.ply" class="hidden">
+            <div class="text-xs italic">Supported: .spz, .ply files</div>
+        </div>
+        <div id="splatsError" class="text-red-400 hidden mt-2"></div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+            }
         }
-      }
-      
-      addMeasurementPoint(pointPos);
-      snapAxis = null;
-    }
-  }
+    </script>
 
-  // Each frame, update the preview line if we have an active measurement
-  scene.onBeforeRenderObservable.add(() => {
-    if (activePoints.length === 0) return;
+    <script type="module">
+        import * as THREE from 'three';
+        import * as GaussianSplats3D from 'gaussian-splats-3d';
 
-    // Create ray from camera position in forward direction
-    const ray = new BABYLON.Ray(
-      camera.position, 
-      camera.getDirection(BABYLON.Vector3.Forward()),
-      100 // Reasonable length
-    );
-    
-    // Get all hits and find the closest valid one
-    const hits = scene.multiPickWithRay(ray, (mesh) => {
-      return mesh.isVisible && 
-             mesh.isPickable !== false && 
-             mesh.isEnabled() && 
-             !measurementPoints.includes(mesh) && 
-             mesh !== currentPreviewLine;
-    });
-    
-    let previewPos = null;
-    const lastPt = activePoints[activePoints.length - 1];
+        // --- Configuration ---
+        const config = {
+            initialCameraDistance: 5,
+            minCameraDistance: 0.1,
+            maxCameraDistance: 100,
+            zoomSpeed: 0.9,
+            moveSpeed: { normal: 6.0, boost: 16.0 },
+            mouseSensitivity: 0.002,
+            verticalRotationLimit: Math.PI / 2 - 0.01
+        };
 
-    if (hits && hits.length > 0) {
-      // Sort by distance to get closest hit
-      hits.sort((a, b) => a.distance - b.distance);
-      previewPos = hits[0].pickedPoint.clone();
+        // --- Global Variables ---
+        let scene, camera, renderer, pivot;
+        const clock = new THREE.Clock();
+        const movementState = { forward: 0, right: 0, shift: false };
+        let pitch = 0, yaw = 0, isPointerLocked = false;
+        let cameraDistance = config.initialCameraDistance;
+        const elements = {
+            crosshair: document.getElementById('crosshair'),
+            instructions: document.getElementById('instructions'),
+            measurementInstructions: document.getElementById('measurement-instructions')
+        };
+        const vec = {
+            direction: new THREE.Vector3(),
+            right: new THREE.Vector3(),
+            move: new THREE.Vector3(),
+            worldUp: new THREE.Vector3(0, 1, 0)
+        };
 
-      // snap axis if needed
-      if (snapAxis === 'x') {
-        previewPos.y = lastPt.y;
-        previewPos.z = lastPt.z;
-      } else if (snapAxis === 'y') {
-        previewPos.x = lastPt.x;
-        previewPos.z = lastPt.z;
-      } else if (snapAxis === 'z') {
-        previewPos.x = lastPt.x;
-        previewPos.y = lastPt.y;
-      }
-    } else {
-      // fallback if no geometry is hit: place the preview line ~5 units in front
-      const forward = camera.getForwardRay().direction;
-      previewPos = lastPt.add(forward.scale(5));
-    }
+        // --- Measurement Tool Variables ---
+        const measurementState = {
+            active: true, // Always active
+            measuring: false,
+            points: [],
+            previewPoint: new THREE.Vector3(),
+            currentLine: null,
+            snapAxis: null,
+            globalScaleFactor: 1.0,
+            lastClickTime: 0,
+            currentColorIndex: 0,
+            isLoop: false
+        };
+        
+        // Pastel colors for measurement lines
+        const lineColors = [
+            0x98DDCA, // Soft Mint
+            0xFFAEBC, // Pastel Pink
+            0xFFD6A5, // Pastel Orange
+            0xBBDEFB, // Soft Blue
+            0xD0F0C0, // Tea Green
+            0xF4C2C2, // Baby Pink
+            0xCCCCFF, // Periwinkle
+            0xF8C8DC, // Cotton Candy
+            0xFDFD96, // Pastel Yellow
+            0xBDECB6  // Soft Green
+        ];
+        
+        const measurementObjects = {
+            lines: [],
+            points: [],
+            labels: []
+        };
+        const raycaster = new THREE.Raycaster();
+        // Set minimum distance to a very small value to detect nearby objects
+        raycaster.near = 0.01;
+        const centerScreen = new THREE.Vector2(0, 0); // Center of screen for raycasting
+        let measurementGroup;
 
-    // Create/update a dashed preview line
-    if (!currentPreviewLine) {
-      currentPreviewLine = BABYLON.MeshBuilder.CreateLines("previewLine", {
-        points: [lastPt, previewPos],
-        updatable: true
-      }, scene);
-      currentPreviewLine.color = currentLineColor;
-    } else {
-      BABYLON.MeshBuilder.CreateLines(null, {
-        points: [lastPt, previewPos],
-        instance: currentPreviewLine
-      });
-    }
+        let splatsLoaded = false;
+        let splatViewer;
 
-    // Create/update a distance label for preview
-    const dist = BABYLON.Vector3.Distance(lastPt, previewPos) * globalScaleFactor;
-    const mid = BABYLON.Vector3.Center(lastPt, previewPos);
-    if (!currentPreviewLabel) {
-      currentPreviewLabel = createTextLabel(dist.toFixed(2), mid, currentLineColor);
-      measurementLabels.push({ labelMesh: currentPreviewLabel, userData:{ type:"preview" }});
-    } else {
-      updateTextLabel(currentPreviewLabel, dist.toFixed(2), mid);
-    }
-  });
+        function initSplatViewer() {
+            if (splatsLoaded) return;
+            splatsLoaded = true;
+            
+            // Remove worker disabling option from Viewer constructor
+            const viewerOptions = {
+                cameraUp: [0, -1, -0.6],
+                initialCameraPosition: [-1, -4, 6],
+                initialCameraLookAt: [0, 4, 0]
+                // REMOVED: useWorkers: false 
+            };
 
-  /*********************************************************
-   *  Add a new measurement point
-   *  - Check for loop closure => area calc
-   *********************************************************/
-  function addMeasurementPoint(pos) {
-    // If the user places a point near the first point => close the loop
-    if (activePoints.length >= 2) {
-      const first = activePoints[0];
-      const distToFirst = BABYLON.Vector3.Distance(first, pos);
-      if (distToFirst < 0.05) {
-        // set pos exactly to first
-        pos = first.clone();
-        handleLoopClosed();
-        return;
-      }
-    }
+            // Log the options being passed
+            console.log('Initializing Viewer with options:', viewerOptions);
 
-    activePoints.push(pos.clone()); // Ensure we clone the position
-
-    // Create a small white sphere
-    const sphere = BABYLON.MeshBuilder.CreateSphere("refPoint",{diameter:0.1}, scene);
-    sphere.position = pos.clone();
-    const smat = new BABYLON.StandardMaterial("refMat", scene);
-    smat.diffuseColor = BABYLON.Color3.White();
-    smat.emissiveColor = BABYLON.Color3.White().scale(0.5); // Make it glow slightly
-    sphere.material = smat;
-    sphere.isPickable = false; // Don't let reference points interfere with picking
-    measurementPoints.push(sphere);
-
-    // If there's at least 1 existing point, create a line segment
-    if (activePoints.length > 1) {
-      const p1 = activePoints[activePoints.length-2];
-      const p2 = activePoints[activePoints.length-1];
-      createMeasurementLine(p1, p2);
-    }
-  }
-
-  // If we detect loop closure => compute area, finalize
-  function handleLoopClosed() {
-    // The new point is effectively the same as the first => we have a closed polygon
-    // Use e.g. Newell's Method to compute area. 
-    const area = computeSurfaceArea(activePoints);
-    // Place an area label
-    const center = averagePoint(activePoints);
-    center.y += 0.2;
-    const areaLabel = createTextLabel(`Area: ${(area * globalScaleFactor * globalScaleFactor).toFixed(2)}`,
-                                      center, currentLineColor);
-    areaLabel.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
-    measurementLabels.push({ 
-      labelMesh: areaLabel, 
-      userData:{ 
-        type: "area", 
-        points: activePoints.map(v => v.clone()), // store original polygon
-        originalArea: area,
-        color: currentLineColor.clone() // Store the color for later updates
-      } 
-    });
-
-    completeMeasurement();
-  }
-
-  // Actual area method (Newell’s method)
-  function computeSurfaceArea(points) {
-    let normal = new BABYLON.Vector3(0,0,0);
-    for (let i=0; i<points.length; i++){
-      const current = points[i];
-      const next = points[(i+1) % points.length];
-      normal.x += (current.y - next.y) * (current.z + next.z);
-      normal.y += (current.z - next.z) * (current.x + next.x);
-      normal.z += (current.x - next.x) * (current.y + next.y);
-    }
-    return 0.5 * normal.length();
-  }
-  // Helper to find average point of a polygon
-  function averagePoint(points) {
-    let sum = new BABYLON.Vector3(0,0,0);
-    points.forEach(p => sum.addInPlace(p));
-    return sum.scale(1 / points.length);
-  }
-
-  // Create a line segment between two points
-  function createMeasurementLine(start, end) {
-    const dist = BABYLON.Vector3.Distance(start, end); // unscaled
-    const mid = BABYLON.Vector3.Center(start, end);
-
-    // A line
-    const lineMesh = BABYLON.MeshBuilder.CreateLines("measureLine", {
-      points: [start, end]
-    }, scene);
-    lineMesh.color = currentLineColor.clone(); // Clone the color to preserve it
-
-    lineMesh.userData = { 
-      start: start.clone(), 
-      end: end.clone(), 
-      originalDistance: dist,
-      color: currentLineColor.clone() // Store the color with the line
-    };
-    measurementLines.push(lineMesh);
-
-    // A label with scaled distance
-    const distance = dist * globalScaleFactor;
-    const label = createTextLabel(distance.toFixed(2), mid, currentLineColor);
-
-    // store userData => so we can recalc
-    measurementLabels.push({ 
-      labelMesh: label, 
-      userData: {
-        type: "distance",
-        start: start.clone(),
-        end: end.clone(),
-        originalDistance: dist,
-        color: currentLineColor.clone() // Store the color with the label
-      }
-    });
-  }
-
-  // Start or reset the active measurement
-  function startNewMeasurement() {
-    activePoints = [];
-    if (currentPreviewLine) {
-      currentPreviewLine.dispose(); 
-      currentPreviewLine = null;
-    }
-    if (currentPreviewLabel) {
-      currentPreviewLabel.dispose(); 
-      currentPreviewLabel = null;
-    }
-    // pick a new color
-    currentLineColor = BABYLON.Color3.FromHexString(pastelColors[colorIndex]);
-    colorIndex = (colorIndex + 1) % pastelColors.length;
-  }
-
-  // Finalize the measurement (create "total" label if multiple segments)
-  function completeMeasurement() {
-    // Remove preview
-    if (currentPreviewLine) {
-      currentPreviewLine.dispose();
-      currentPreviewLine = null;
-    }
-    if (currentPreviewLabel) {
-      const previewIndex = measurementLabels.findIndex(ml => ml.labelMesh === currentPreviewLabel);
-      if (previewIndex >= 0) {
-        measurementLabels.splice(previewIndex, 1);
-      }
-      currentPreviewLabel.dispose();
-      currentPreviewLabel = null;
-    }
-    // If we have > 2 points => sum total distance
-    if (activePoints.length > 2) {
-      let totalDist = 0;
-      for (let i=1; i<activePoints.length; i++){
-        totalDist += BABYLON.Vector3.Distance(activePoints[i-1], activePoints[i]);
-      }
-      // place a total label near midpoint
-      totalDist *= globalScaleFactor;
-      const midIndex = Math.floor(activePoints.length/2);
-      const centerPos = activePoints[midIndex].clone();
-      centerPos.y += 0.3;
-
-      const totalLabel = createTextLabel(`Total: ${totalDist.toFixed(2)}`, centerPos, currentLineColor);
-      measurementLabels.push({
-        labelMesh: totalLabel,
-        userData: {
-          type: "total",
-          points: activePoints.map(v => v.clone()),
-          originalDistances: [...activePoints], // or store each segment's distance
-          color: currentLineColor.clone() // Store the color for later updates
+            splatViewer = new GaussianSplats3D.Viewer(viewerOptions);
         }
-      });
-    }
-    startNewMeasurement();
-  }
 
-  function removeLastMeasurementPoint() {
-    if (activePoints.length === 0) return;
-    activePoints.pop();
-
-    // Remove the last line + label from arrays
-    const lastLine = measurementLines.pop();
-    if (lastLine) lastLine.dispose();
-
-    // Remove last distance label from measurementLabels
-    let labelIndex = -1;
-    for (let i=measurementLabels.length-1; i>=0; i--){
-      if (measurementLabels[i].userData.type==="distance") {
-        labelIndex = i; 
-        break;
-      }
-    }
-    if (labelIndex >= 0) {
-      measurementLabels[labelIndex].labelMesh.dispose();
-      measurementLabels.splice(labelIndex,1);
-    }
-
-    // Remove last sphere
-    const lastSphere = measurementPoints.pop();
-    if (lastSphere) lastSphere.dispose();
-  }
-
-  function cancelMeasurement() {
-    if (currentPreviewLine) {
-      currentPreviewLine.dispose();
-      currentPreviewLine = null;
-    }
-    if (currentPreviewLabel) {
-      const previewIndex = measurementLabels.findIndex(ml => ml.labelMesh === currentPreviewLabel);
-      if (previewIndex >= 0) {
-        measurementLabels.splice(previewIndex, 1);
-      }
-      currentPreviewLabel.dispose();
-      currentPreviewLabel = null;
-    }
-    activePoints = [];
-  }
-
-  // Clear all reference points
-  function clearReferencePoints() {
-    measurementPoints.forEach((m) => m.dispose());
-    measurementPoints = [];
-    activePoints = [];
-    cancelMeasurement();
-    startNewMeasurement();
-  }
-
-  // Clear all lines + labels + points
-  function clearAllMeasurements() {
-    measurementLines.forEach(m => m.dispose());
-    measurementLines = [];
-
-    measurementLabels.forEach(l => l.labelMesh.dispose());
-    measurementLabels = [];
-
-    measurementPoints.forEach(p => p.dispose());
-    measurementPoints = [];
-
-    cancelMeasurement();
-  }
-
-  /*********************************************************
-   *   Updating All Measurement Labels on scale factor change
-   *********************************************************/
-  // We'll detect double-click on a label => prompt for new reference distance
-  scene.onPointerObservable.add((pointerInfo) => {
-    if (pointerInfo.type === BABYLON.PointerEventTypes.POINTERDOUBLETAP) {
-      if (!isPointerLocked) {
-        // see if they clicked on a label sprite/plane
-        const pick = scene.pick(pointerInfo.event.clientX, pointerInfo.event.clientY,
-          (mesh) => measurementLabels.some(ml => ml.labelMesh === mesh));
-        if (pick?.hit) {
-          const labelMesh = pick.pickedMesh;
-          const found = measurementLabels.find(ml => ml.labelMesh === labelMesh);
-          if (found && found.userData.type!=="preview") {
-            promptForLabelEdit(found);
-          }
+        // Add a loading progress indicator
+        function createProgressBar() {
+            const progressContainer = document.createElement('div');
+            progressContainer.className = 'fixed top-5 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-70 p-3 rounded text-white z-50';
+            progressContainer.id = 'loading-progress';
+            
+            const progressText = document.createElement('div');
+            progressText.className = 'text-center mb-2';
+            progressText.textContent = 'Loading...';
+            
+            const progressBarOuter = document.createElement('div');
+            progressBarOuter.className = 'w-64 h-4 bg-gray-700 rounded overflow-hidden';
+            
+            const progressBarInner = document.createElement('div');
+            progressBarInner.className = 'h-full bg-blue-500 transition-all duration-300 ease-out';
+            progressBarInner.style.width = '0%';
+            progressBarInner.id = 'progress-bar-inner';
+            
+            progressBarOuter.appendChild(progressBarInner);
+            progressContainer.appendChild(progressText);
+            progressContainer.appendChild(progressBarOuter);
+            
+            document.body.appendChild(progressContainer);
+            progressContainer.style.display = 'none';
+            
+            return progressContainer;
         }
-      }
-    }
-  });
 
-  async function promptForLabelEdit(labelObj) {
-    // Ask for both value and unit
-    const currentUnit = measurementUnit || 'm';
-    const promptMsg = `Enter reference measurement value (current unit: ${currentUnit}):`;
-    const newVal = prompt(promptMsg, labelObj.userData?.originalDistance || "");
-    
-    if (newVal !== null) {
-      // Check if the input includes a unit
-      const match = newVal.match(/^([\d.]+)\s*([a-zA-Z]+)?$/);
-      if (match) {
-        const numericVal = parseFloat(match[1]);
-        // Update unit if provided
-        if (match[2]) {
-          measurementUnit = match[2];
+        const progressBar = createProgressBar();
+
+        function updateProgressBar(percent) {
+            const progressInner = document.getElementById('progress-bar-inner');
+            if (progressInner) {
+                progressInner.style.width = `${percent}%`;
+            }
+            if (percent >= 100) {
+                setTimeout(() => {
+                    progressBar.style.display = 'none';
+                }, 500);
+            } else if (progressBar.style.display === 'none') {
+                progressBar.style.display = 'block';
+            }
+        }
+
+        async function loadSplatFile(file) {
+            try {
+                const fileName = file.name.toLowerCase();
+                // Ensure initSplatViewer is called *before* loading starts
+                initSplatViewer(); 
+                progressBar.style.display = 'block';
+                updateProgressBar(0);
+                
+                // Log available methods for debugging
+                console.log('GaussianSplats3D API:', {
+                    availableMethods: Object.getOwnPropertyNames(GaussianSplats3D),
+                    availableClasses: Object.keys(GaussianSplats3D),
+                    SpzModel: GaussianSplats3D.SpzModel ? 'Available' : 'Not available', // Log SpzModel availability
+                    SpzLoader: GaussianSplats3D.SpzLoader ? 'Available' : 'Not available' // Log SpzLoader availability
+                });
+                
+                const arrayBuffer = await file.arrayBuffer();
+                
+                let fileFormat;
+                if (fileName.endsWith('.spz')) {
+                    fileFormat = 'spz';
+                } else if (fileName.endsWith('.ply')) {
+                    fileFormat = 'ply';
+                } else {
+                    throw new Error('Unsupported file extension');
+                }
+                
+                // Common options for all formats
+                const options = {
+                    splatAlphaRemovalThreshold: 5,
+                    position: [0, 1, 0],
+                    rotation: [0, 0, 0, 1],
+                    scale: [1.5, 1.5, 1.5],
+                    onProgress: (progress) => {
+                        updateProgressBar(Math.min(progress * 100, 100));
+                    }
+                };
+
+                // Load the file using the proper method for each format
+                if (fileFormat === 'spz') {
+                    // Use SpzLoader instead of SpzModel
+                    console.log('Using SpzLoader.loadFromURL static method for SPZ loading');
+                    const blob = new Blob([arrayBuffer]);
+                    const blobUrl = URL.createObjectURL(blob);
+
+                    try {
+                        // Use the static loadFromURL method from SpzLoader
+                        const splatData = await GaussianSplats3D.SpzLoader.loadFromURL(
+                            blobUrl,
+                            (progress) => {
+                                updateProgressBar(Math.min(progress * 100, 100));
+                            }
+                        );
+                        
+                        console.log('SPZ data loaded successfully:', splatData);
+                        // Add the loaded data to the viewer WITH options again
+                        console.log('Adding SPZ data directly to viewer WITH options');
+                        splatViewer.addSplatBuffers([splatData], options); // ADDED options argument back
+
+                    } catch (innerError) {
+                        console.error('Detailed error when loading SPZ:', innerError);
+                        console.log('Error stack:', innerError.stack);
+                        throw innerError;
+                    } finally {
+                         // Clean up the blob URL after loading
+                        URL.revokeObjectURL(blobUrl);
+                    }
+
+                } else if (fileFormat === 'ply') {
+                    // For PLY files, create a blob URL
+                    const blob = new Blob([arrayBuffer]);
+                    const blobUrl = URL.createObjectURL(blob);
+                    
+                    // Use the static loadFromURL method directly
+                    console.log('Using SplatLoader.loadFromURL static method for PLY loading');
+                    
+                    try {
+                        // From the logs, we see loadFromURL is available as a static method
+                        const splatData = await GaussianSplats3D.SplatLoader.loadFromURL(
+                            blobUrl, 
+                            (progress) => {
+                                updateProgressBar(Math.min(progress * 100, 100));
+                            }
+                        );
+                        
+                        console.log('PLY data loaded successfully:', splatData);
+                        console.log('Available model types:', {
+                            modelClasses: Object.keys(GaussianSplats3D).filter(key => key.includes('Model')),
+                            splatModelType: typeof GaussianSplats3D.SplatModel
+                        });
+                        
+                        // For PLY files, we need to directly add the data to the viewer
+                        // rather than constructing a model first
+                        console.log('Adding PLY data directly to viewer with options');
+                        // Pass the options object when adding the buffer
+                        splatViewer.addSplatBuffers([splatData], options); 
+                        
+                    } catch (innerError) {
+                        console.error('Detailed error when loading PLY:', innerError);
+                        console.log('Error stack:', innerError.stack);
+                        throw innerError;
+                    }
+                    
+                    // Clean up the blob URL after loading
+                    URL.revokeObjectURL(blobUrl);
+                }
+                
+                console.log(`${fileName} loaded successfully and added to scene`);
+                splatViewer.start();
+                updateProgressBar(100);
+            } catch (err) {
+                console.error('Error loading file:', err);
+                console.log('Error stack:', err.stack);
+                showSplatError(`Failed to load file: ${err.message || 'Unknown error'}`);
+                progressBar.style.display = 'none';
+            }
+        }
+
+        function showSplatError(msg) {
+            const errDiv = document.getElementById('splatsError');
+            errDiv.innerText = msg;
+            errDiv.classList.remove('hidden');
+        }
+
+        // Set up the file button click handler
+        document.getElementById('select-file-btn').addEventListener('click', () => {
+            document.getElementById('file-input').click();
+        });
+
+        // Handle file input selection
+        document.getElementById('file-input').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            document.getElementById('splatsError').classList.add('hidden');
+            const name = file.name.toLowerCase();
+            
+            if (name.endsWith('.spz') || name.endsWith('.ply')) {
+                loadSplatFile(file);
+            } else {
+                showSplatError('Unsupported file type. Please select a .spz or .ply file.');
+            }
+        });
+
+        // Set up drag and drop handlers
+        const dropzone = document.getElementById('splats-dropzone');
+        dropzone.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            dropzone.classList.add('bg-opacity-70');
+        });
+        
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('bg-opacity-70');
+        });
+        
+        dropzone.addEventListener('drop', (event) => {
+            event.preventDefault();
+            dropzone.classList.remove('bg-opacity-70');
+            
+            const file = event.dataTransfer.files[0];
+            if (!file) return;
+            
+            document.getElementById('splatsError').classList.add('hidden');
+            const name = file.name.toLowerCase();
+            
+            if (name.endsWith('.spz') || name.endsWith('.ply')) {
+                loadSplatFile(file);
+            } else {
+                showSplatError('Unsupported file type. Please drop a .spz or .ply file.');
+            }
+        });
+
+        // Create all mesh objects from configuration array
+        function createObjects() {
+            const objects = [
+                [new THREE.BoxGeometry(2, 2, 2), 0xff0000, [10, 1, 0]],
+                [new THREE.SphereGeometry(1.5, 32, 16), 0x0000ff, [-8, 1.5, -5]],
+                [new THREE.ConeGeometry(1.5, 3, 32), 0xffff00, [0, 1.5, -12]],
+                [new THREE.BoxGeometry(20, 20, 20), 0x9370DB, [70, 10, -50]],
+                [new THREE.TorusGeometry(15, 5, 16, 50), 0x00CED1, [-80, 20, -90], {x: Math.PI/2}],
+                [new THREE.CylinderGeometry(10, 10, 30, 32), 0xFF8C00, [30, 15, -120]],
+                [new THREE.ConeGeometry(15, 30, 4), 0x32CD32, [-40, 15, -150]]
+            ];
+            
+            objects.forEach(([geometry, color, position, rotation]) => {
+                const mesh = new THREE.Mesh(
+                    geometry, 
+                    new THREE.MeshStandardMaterial({ color })
+                );
+                mesh.position.set(...position);
+                if (rotation) Object.entries(rotation).forEach(([axis, value]) => mesh.rotation[axis] = value);
+                scene.add(mesh);
+            });
         }
         
-        if (!isNaN(numericVal)) {
-          // Update scale factor based on the type of measurement
-          if (labelObj.userData.type === "distance") {
-            const ratio = numericVal / labelObj.userData.originalDistance;
-            globalScaleFactor = ratio;
-          }
-          else if (labelObj.userData.type === "area") {
-            const ratio = Math.sqrt(numericVal / labelObj.userData.originalArea);
-            globalScaleFactor = ratio;
-          }
-          else if (labelObj.userData.type === "total") {
-            let sum = 0;
-            const pts = labelObj.userData.points;
-            for (let i=1; i<pts.length; i++){
-              sum += BABYLON.Vector3.Distance(pts[i-1], pts[i]);
+        // Initialize scene, camera, and renderer
+        function init() {
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x353ebd);
+            scene.fog = new THREE.Fog(0x87ceeb, 1, 200);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+            
+            // Camera & pivot
+            camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
+            pivot = new THREE.Object3D();
+            scene.add(pivot);
+            updateCameraPosition();
+            
+            // Lighting
+            scene.add(
+                new THREE.AmbientLight(0xffffff, 0.1),
+                new THREE.DirectionalLight(0xffffff, 2.8)
+            );
+            
+            // Create measurement group
+            measurementGroup = new THREE.Group();
+            scene.add(measurementGroup);
+            
+            // Add objects, setup events, start animation
+            createObjects();
+            setupEventListeners();
+            setupMeasurementTools();
+            
+            // Show measurement instructions by default
+            elements.measurementInstructions.classList.remove('hidden');
+            
+            requestAnimationFrame(animate);
+        }
+        
+        // Setup all event listeners
+        function setupEventListeners() {
+            // Window resize
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+            
+            // Key handlers - reuse the same patterns for down/up
+            const keyMap = {
+                'KeyW': ['forward', 1],
+                'KeyS': ['forward', -1],
+                'KeyA': ['right', -1],
+                'KeyD': ['right', 1],
+                'ShiftLeft': ['shift', true],
+                'ShiftRight': ['shift', true]
+            };
+            
+            document.addEventListener('keydown', (event) => {
+                if (!isPointerLocked) return;
+
+                // Combine arrow key handling
+                if (event.code.startsWith('Arrow')) {
+                    switch (event.code) {
+                        case 'ArrowUp':
+                        case 'ArrowDown':
+                            measurementState.snapAxis = 'y';
+                            break;
+                        case 'ArrowLeft':
+                            measurementState.snapAxis = 'x';
+                            break;
+                        case 'ArrowRight':
+                            measurementState.snapAxis = 'z';
+                            break;
+                    }
+                    event.preventDefault();
+                    return;
+                }
+
+                // Handle backspace/delete
+                if (event.code === 'Backspace' || event.code === 'Delete') {
+                    if (measurementState.points.length > 0) {
+                        removeLastMeasurementPoint();
+                    }
+                    event.preventDefault();
+                    return;
+                }
+
+                // Handle Enter
+                if (event.code === 'Enter') {
+                    if (measurementState.points.length > 0) {
+                        if (measurementState.points.length >= 2) {
+                            completeMeasurement();
+                        } else {
+                            cancelCurrentMeasurement();
+                        }
+                    }
+                    event.preventDefault();
+                    return;
+                }
+
+                // Movement keys
+                if (!keyMap[event.code]) return;
+                const [property, value] = keyMap[event.code];
+                movementState[property] = value;
+            });
+            
+            document.addEventListener('keyup', (event) => {
+                if (!keyMap[event.code]) return;
+                const [property, value] = keyMap[event.code];
+                if (property === 'shift' || movementState[property] === value) {
+                    movementState[property] = property === 'shift' ? false : 0;
+                }
+            });
+            
+            // Mouse and pointer lock
+            document.addEventListener('mousemove', (event) => {
+                if (!isPointerLocked) return;
+                yaw -= (event.movementX || 0) * config.mouseSensitivity;
+                pitch = THREE.MathUtils.clamp(
+                    pitch - (event.movementY || 0) * config.mouseSensitivity,
+                    -config.verticalRotationLimit,
+                    config.verticalRotationLimit
+                );
+            });
+            
+            // Pointer lock events
+            document.addEventListener('pointerlockchange', () => {
+                isPointerLocked = document.pointerLockElement === renderer.domElement;
+                elements.crosshair.style.display = isPointerLocked ? 'block' : 'none';
+                elements.instructions.style.display = isPointerLocked ? 'none' : 'block';
+                if (!isPointerLocked) Object.assign(movementState, {forward: 0, right: 0, shift: false});
+            });
+            
+            // Detect real clicks vs. drags
+            let dragStartTime = 0;
+            let isDragging = false;
+            
+            renderer.domElement.addEventListener('mousedown', () => {
+                dragStartTime = Date.now();
+                isDragging = false;
+            });
+            
+            renderer.domElement.addEventListener('mousemove', () => {
+                if (Date.now() - dragStartTime > 100) {
+                    isDragging = true;
+                }
+            });
+            
+            renderer.domElement.addEventListener('click', (event) => {
+                if (!isPointerLocked) {
+                    renderer.domElement.requestPointerLock();
+                    return;
+                }
+                
+                // Only handle real clicks, not drags
+                if (!isDragging && Date.now() - measurementState.lastClickTime > 300) {
+                    measurementState.lastClickTime = Date.now();
+                    handleMeasurementClick();
+                }
+                
+                isDragging = false;
+            });
+
+            // Mouse wheel for zoom
+            renderer.domElement.addEventListener('wheel', (event) => {
+                if (!isPointerLocked) return;
+                
+                event.preventDefault();
+                
+                // Determine scroll direction and amount
+                const delta = Math.sign(event.deltaY) * config.zoomSpeed;
+                
+                // Update camera distance with limits
+                cameraDistance = THREE.MathUtils.clamp(
+                    cameraDistance + delta,
+                    config.minCameraDistance,
+                    config.maxCameraDistance
+                );
+                
+                updateCameraPosition();
+            }, { passive: false });
+        }
+        
+        // Setup measurement tool UI and events
+        function setupMeasurementTools() {
+            // Button elements
+            const clearPointsButton = document.getElementById('clearPoints');
+            const clearMeasurementsButton = document.getElementById('clearMeasurements');
+            
+            // Clear all reference points
+            clearPointsButton.addEventListener('click', () => {
+                if (confirm('Are you sure you want to clear all reference points?')) {
+                    clearReferencePoints();
+                }
+            });
+            
+            // Clear all measurements
+            clearMeasurementsButton.addEventListener('click', () => {
+                if (confirm('Are you sure you want to clear all measurements?')) {
+                    clearAllMeasurements();
+                }
+            });
+            
+            // Initialize the first measurement
+            startNewMeasurement();
+        }
+        
+        // Handle click when in measurement mode
+        function handleMeasurementClick() {
+            if (!isPointerLocked) return;
+            
+            // Perform raycasting from center of screen (crosshair position)
+            raycaster.setFromCamera(centerScreen, camera);
+            
+            // First check if we hit an existing reference point
+            const existingPointIndex = checkHitReferencePoint();
+            
+            let position = null;
+            
+            if (existingPointIndex !== -1) {
+                // Get the reference point position
+                position = measurementObjects.points[existingPointIndex].position.clone();
+            } else {
+                // Check for intersections with all scene objects (excluding measurement objects)
+                const sceneObjects = scene.children.filter(child => child !== measurementGroup);
+                const intersects = raycaster.intersectObjects(sceneObjects, true);
+                
+                if (intersects.length > 0) {
+                    // Use the first intersection point
+                    position = intersects[0].point.clone();
+                }
             }
-            const ratio = numericVal / sum;
-            globalScaleFactor = ratio;
-          }
-
-          updateAllMeasurementLabels();
+            
+            // If we have a position (either from reference point or scene object)
+            if (position) {
+                // Apply axis snapping if active and we have previous points
+                if (measurementState.snapAxis && measurementState.points.length > 0) {
+                    const lastPoint = measurementState.points[measurementState.points.length - 1];
+                    if (measurementState.snapAxis === 'x') {
+                        position.y = lastPoint.y;
+                        position.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'y') {
+                        position.x = lastPoint.x;
+                        position.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'z') {
+                        position.x = lastPoint.x;
+                        position.y = lastPoint.y;
+                    }
+                }
+                
+                addMeasurementPoint(position);
+            }
+            
+            // Reset snap axis after adding a point
+            measurementState.snapAxis = null;
         }
-      }
-    }
-  }
-
-  function updateAllMeasurementLabels() {
-    // For each line label => recalc distance
-    measurementLabels.forEach((lobj) => {
-      const { labelMesh, userData } = lobj;
-      if (!userData || userData.type === "preview") return;
-      
-      // Use the stored color instead of the current color
-      const labelColor = userData.color || currentLineColor;
-      
-      if (userData.type === "distance") {
-        // dist = originalDistance * globalScaleFactor
-        const scaled = userData.originalDistance * globalScaleFactor;
-        const newText = scaled.toFixed(2);
-        // midpoint
-        const mid = BABYLON.Vector3.Center(userData.start, userData.end);
-        updateTextLabel(labelMesh, newText, mid, labelColor);
-      }
-      else if (userData.type === "total") {
-        // sum up segments in userData.points
-        const pts = userData.points;
-        let sum = 0;
-        for (let i=1; i<pts.length; i++){
-          sum += BABYLON.Vector3.Distance(pts[i-1], pts[i]);
+        
+        // Check if ray hits an existing reference point
+        function checkHitReferencePoint() {
+            // Use raycaster that's already set up with center screen position
+            const intersects = raycaster.intersectObjects(measurementObjects.points, false);
+            
+            // Only return a hit if we directly intersect with a reference point
+            if (intersects.length > 0) {
+                return measurementObjects.points.indexOf(intersects[0].object);
+            }
+            
+            return -1;
         }
-        sum *= globalScaleFactor;
-        updateTextLabel(labelMesh, `Total: ${sum.toFixed(2)}`, 
-          averagePoint(pts).add(new BABYLON.Vector3(0,0.3,0)), labelColor);
-      }
-      else if (userData.type === "area") {
-        // area = originalArea * (scale^2)
-        const scaledArea = userData.originalArea * globalScaleFactor * globalScaleFactor;
-        const mid = averagePoint(userData.points).add(new BABYLON.Vector3(0,0.2,0));
-        updateTextLabel(labelMesh, `Area: ${scaledArea.toFixed(2)}`, mid, labelColor);
-      }
-    });
-  }
+        
+        // Compute surface area of a closed loop
+        function computeSurfaceArea(points) {
+            // Simple Newell's method for polygon area in 3D:
+            let normal = new THREE.Vector3();
+            for (let i = 0; i < points.length; i++) {
+                const current = points[i];
+                const next = points[(i + 1) % points.length];
+                normal.x += (current.y - next.y) * (current.z + next.z);
+                normal.y += (current.z - next.z) * (current.x + next.x);
+                normal.z += (current.x - next.x) * (current.y + next.y);
+            }
+            return 0.5 * normal.length();
+        }
 
-  /*********************************************************
-   *   Label Helpers: create text on a plane with DynamicTexture
-   *********************************************************/
-  function createTextLabel(text, position, color3) {
-    const plane = BABYLON.MeshBuilder.CreatePlane("labelPlane", {width:1, height:0.3}, scene);
-    plane.position = position.clone();
-    plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
-    plane.renderingGroupId = 1;
+        // Handle loop closure
+        function handleLoopClosed() {
+            measurementState.isLoop = true;
+            const area = computeSurfaceArea(measurementState.points);
+            const center = new THREE.Vector3();
+            measurementState.points.forEach(p => center.add(p));
+            center.multiplyScalar(1 / measurementState.points.length);
+            const areaLabel = createTextLabel(`Area: ${(area * measurementState.globalScaleFactor ** 2).toFixed(2)}`,
+                center, measurementState.currentLineColor);
+            measurementGroup.add(areaLabel);
+            measurementObjects.labels.push(areaLabel);
+            completeMeasurement();
+        }
 
-    const dt = new BABYLON.DynamicTexture("labelTexture", {width:256, height:64}, scene);
-    const mat = new BABYLON.StandardMaterial("labelMat", scene);
-    mat.diffuseTexture = dt;
-    mat.emissiveColor = BABYLON.Color3.White();
-    mat.disableLighting = true;
-    plane.material = mat;
+        // Add a new measurement point
+        function addMeasurementPoint(position) {
+            measurementState.points.push(position);
 
-    drawLabel(dt, text, color3);
-    return plane;
-  }
+            const pointGeometry = new THREE.SphereGeometry(0.05, 8, 8);
+            const pointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const pointObject = new THREE.Mesh(pointGeometry, pointMaterial);
+            pointObject.position.copy(position);
+            pointObject.userData.isReferencePoint = true; // Tag as reference point
+            measurementGroup.add(pointObject);
+            measurementObjects.points.push(pointObject);
 
-  function updateTextLabel(labelPlane, newText, newPosition, color3) {
-    if (newPosition) labelPlane.position = newPosition.clone();
-    const dt = labelPlane.material.diffuseTexture;
-    if (!dt) return;
-    // Use the provided color or fallback to current color
-    drawLabel(dt, newText, color3 || currentLineColor);
-  }
+            if (measurementState.points.length >= 3) {
+                const distToFirst = position.distanceTo(measurementState.points[0]);
+                if (distToFirst < 0.01) {
+                    position.copy(measurementState.points[0]);
+                    handleLoopClosed();
+                    return;
+                }
+            }
 
-  function drawLabel(dynamicTexture, text, color3) {
-    const ctx = dynamicTexture.getContext();
-    const size = dynamicTexture.getSize();
-    ctx.clearRect(0,0,size.width,size.height);
+            if (measurementState.points.length > 1) {
+                const lastTwoPoints = measurementState.points.slice(-2);
+                createMeasurementSegment(lastTwoPoints[0], lastTwoPoints[1]);
+            }
 
-    // background
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
-    ctx.fillRect(0,0,size.width,size.height);
+            updateMeasurementPreview();
+        }
+        
+        // Create a measurement segment between two points
+        function createMeasurementSegment(start, end) {
+            const lineGeometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+            const lineColor = measurementState.currentLineColor;
+            const lineMaterial = new THREE.LineBasicMaterial({ color: lineColor });
+            const line = new THREE.Line(lineGeometry, lineMaterial);
+            measurementGroup.add(line);
+            
+            const distance = start.distanceTo(end) * measurementState.globalScaleFactor;
+            const midpoint = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+            const label = createTextLabel(distance.toFixed(2), midpoint, lineColor);
+            label.userData.start = start.clone();
+            label.userData.end = end.clone();
+            label.userData.originalDistance = start.distanceTo(end);
+            label.userData.lineColor = lineColor;
+            measurementGroup.add(label);
+            
+            measurementState.currentLine = {
+                line: line,
+                labelObject: label,
+                color: lineColor
+            };
+            
+            label.userData.isLabel = true;
+            label.userData.index = measurementObjects.labels.length;
+            
+            measurementObjects.lines.push(line);
+            measurementObjects.labels.push(label);
+            
+            return line;
+        }
+        
+        // Create text label for measurements
+        function createTextLabel(text, position, color = 0xffffff) {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 256;
+            canvas.height = 64;
+            
+            // Convert hex color to rgb for canvas
+            const r = (color >> 16) & 255;
+            const g = (color >> 8) & 255;
+            const b = color & 255;
+            
+            // Darker background based on the color
+            context.fillStyle = `rgba(${r * 0.7 | 0}, ${g * 0.7 | 0}, ${b * 0.7 | 0}, 0.8)`;
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Add a border using the line color
+            context.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+            context.lineWidth = 4;
+            context.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+            
+            context.font = '24px Arial';
+            context.fillStyle = 'white';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillText(text, canvas.width / 2, canvas.height / 2);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.SpriteMaterial({ 
+                map: texture,
+                depthTest: false,
+                depthWrite: false,
+            });
+            const sprite = new THREE.Sprite(material);
+            sprite.position.copy(position);
+            sprite.scale.set(1.5, 0.4, 1);
+            sprite.renderOrder = 999;  // Ensure labels render on top
+            
+            // Make sure these properties are set to enable raycasting
+            sprite.userData.text = text;
+            sprite.userData.color = color;
+            sprite.userData.isInteractive = true;
+            
+            return sprite;
+        }
+        
+        // Update label text
+        function updateLabelText(label, text) {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 256;
+            canvas.height = 64;
+            
+            const color = label.userData.color || 0xffffff;
+            
+            // Convert hex color to rgb for canvas
+            const r = (color >> 16) & 255;
+            const g = (color >> 8) & 255;
+            const b = color & 255;
+            
+            // Darker background based on the color
+            context.fillStyle = `rgba(${r * 0.7 | 0}, ${g * 0.7 | 0}, ${b * 0.7 | 0}, 0.8)`;
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Add a border using the line color
+            context.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+            context.lineWidth = 4;
+            context.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+            
+            context.font = '24px Arial';
+            context.fillStyle = 'white';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillText(text, canvas.width / 2, canvas.height / 2);
+            
+            label.material.map.dispose();
+            label.material.map = new THREE.CanvasTexture(canvas);
+            label.material.needsUpdate = true;
+            
+            label.userData.text = text;
+        }
+        
+        // Update the measurement preview line
+        function updateMeasurementPreview() {
+            if (measurementState.points.length === 0) return;
+            
+            raycaster.setFromCamera(centerScreen, camera);
+            
+            // First try to hit actual scene objects (excluding measurement elements)
+            const sceneObjects = scene.children.filter(child => child !== measurementGroup);
+            let intersects = raycaster.intersectObjects(sceneObjects, true);
+            
+            // If no scene objects were hit, try to hit measurement points
+            if (intersects.length === 0) {
+                intersects = raycaster.intersectObjects(measurementObjects.points, false);
+            }
+            
+            if (intersects.length > 0) {
+                let previewPoint = intersects[0].point.clone();
+                const lastPoint = measurementState.points[measurementState.points.length - 1];
+                
+                if (measurementState.snapAxis) {
+                    if (measurementState.snapAxis === 'x') {
+                        previewPoint.y = lastPoint.y;
+                        previewPoint.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'y') {
+                        previewPoint.x = lastPoint.x;
+                        previewPoint.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'z') {
+                        previewPoint.x = lastPoint.x;
+                        previewPoint.y = lastPoint.y;
+                    }
+                }
+                
+                measurementState.previewPoint = previewPoint;
+                
+                const lineColor = measurementState.currentLineColor;
+                
+                if (!measurementState.previewLine) {
+                    const lineGeometry = new THREE.BufferGeometry().setFromPoints([lastPoint, previewPoint]);
+                    const lineMaterial = new THREE.LineDashedMaterial({ 
+                        color: lineColor,
+                        dashSize: 0.2,
+                        gapSize: 0.1
+                    });
+                    measurementState.previewLine = new THREE.Line(lineGeometry, lineMaterial);
+                    measurementState.previewLine.computeLineDistances();
+                    measurementGroup.add(measurementState.previewLine);
+                } else {
+                    const points = [lastPoint, previewPoint];
+                    measurementState.previewLine.geometry.dispose();
+                    measurementState.previewLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
+                    measurementState.previewLine.computeLineDistances();
+                }
+                
+                const distance = lastPoint.distanceTo(previewPoint) * measurementState.globalScaleFactor;
+                const midpoint = new THREE.Vector3().addVectors(lastPoint, previewPoint).multiplyScalar(0.5);
+                
+                if (!measurementState.previewLabel) {
+                    measurementState.previewLabel = createTextLabel(distance.toFixed(2), midpoint, lineColor);
+                    measurementGroup.add(measurementState.previewLabel);
+                } else {
+                    updateLabelText(measurementState.previewLabel, distance.toFixed(2));
+                    measurementState.previewLabel.position.copy(midpoint);
+                }
+            } else {
+                // If no intersection, use camera direction to create a point at a reasonable distance
+                const direction = new THREE.Vector3();
+                camera.getWorldDirection(direction);
+                
+                const lastPoint = measurementState.points[measurementState.points.length - 1];
+                const previewPoint = lastPoint.clone().add(direction.multiplyScalar(5));
+                
+                if (measurementState.snapAxis) {
+                    if (measurementState.snapAxis === 'x') {
+                        previewPoint.y = lastPoint.y;
+                        previewPoint.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'y') {
+                        previewPoint.x = lastPoint.x;
+                        previewPoint.z = lastPoint.z;
+                    } else if (measurementState.snapAxis === 'z') {
+                        previewPoint.x = lastPoint.x;
+                        previewPoint.y = lastPoint.y;
+                    }
+                }
+                
+                measurementState.previewPoint = previewPoint;
+                
+                const lineColor = measurementState.currentLineColor;
+                
+                if (!measurementState.previewLine) {
+                    const lineGeometry = new THREE.BufferGeometry().setFromPoints([lastPoint, previewPoint]);
+                    const lineMaterial = new THREE.LineDashedMaterial({ 
+                        color: lineColor,
+                        dashSize: 0.2,
+                        gapSize: 0.1
+                    });
+                    measurementState.previewLine = new THREE.Line(lineGeometry, lineMaterial);
+                    measurementState.previewLine.computeLineDistances();
+                    measurementGroup.add(measurementState.previewLine);
+                } else {
+                    const points = [lastPoint, previewPoint];
+                    measurementState.previewLine.geometry.dispose();
+                    measurementState.previewLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
+                    measurementState.previewLine.computeLineDistances();
+                }
+                
+                const distance = lastPoint.distanceTo(previewPoint) * measurementState.globalScaleFactor;
+                const midpoint = new THREE.Vector3().addVectors(lastPoint, previewPoint).multiplyScalar(0.5);
+                
+                if (!measurementState.previewLabel) {
+                    measurementState.previewLabel = createTextLabel(distance.toFixed(2), midpoint, lineColor);
+                    measurementGroup.add(measurementState.previewLabel);
+                } else {
+                    updateLabelText(measurementState.previewLabel, distance.toFixed(2));
+                    measurementState.previewLabel.position.copy(midpoint);
+                }
+            }
+        }
+        
+        // Complete the current measurement
+        function completeMeasurement() {
+            if (measurementState.points.length < 2) {
+                cancelCurrentMeasurement();
+                return;
+            }
+            
+            if (measurementState.previewLine) {
+                measurementGroup.remove(measurementState.previewLine);
+                measurementState.previewLine.geometry.dispose();
+                measurementState.previewLine = null;
+            }
+            
+            if (measurementState.previewLabel) {
+                measurementGroup.remove(measurementState.previewLabel);
+                measurementState.previewLabel.material.dispose();
+                measurementState.previewLabel = null;
+            }
+            
+            // Get current line color
+            const lineColor = measurementState.currentLineColor;
+            
+            for (let i = 0; i < measurementState.points.length; i++) {
+                const point = measurementState.points[i];
+                const existingPoint = measurementObjects.points.find(p => 
+                    p.position.distanceTo(point) < 0.001
+                );
+                
+                if (!existingPoint) {
+                    const pointGeometry = new THREE.SphereGeometry(0.05, 8, 8);
+                    const pointMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+                    const pointObject = new THREE.Mesh(pointGeometry, pointMaterial);
+                    pointObject.position.copy(point);
+                    pointObject.userData.isReferencePoint = true; // Tag as reference point
+                    measurementGroup.add(pointObject);
+                    measurementObjects.points.push(pointObject);
+                }
+            }
+            
+            if (measurementState.points.length > 2) {
+                let totalDistance = 0;
+                
+                for (let i = 1; i < measurementState.points.length; i++) {
+                    totalDistance += measurementState.points[i-1].distanceTo(measurementState.points[i]);
+                }
+                
+                totalDistance *= measurementState.globalScaleFactor;
+                
+                const midIndex = Math.floor(measurementState.points.length / 2);
+                const centerPosition = measurementState.points[midIndex].clone();
+                centerPosition.y += 0.2;
+                
+                const totalLabel = createTextLabel(`Total: ${totalDistance.toFixed(2)}`, centerPosition, lineColor);
+                totalLabel.userData.isTotal = true;
+                totalLabel.userData.lineColor = lineColor;
+                totalLabel.scale.set(1.5, 0.4, 1);
+                measurementGroup.add(totalLabel);
+                measurementObjects.labels.push(totalLabel);
+            }
+            
+            if (measurementState.isLoop) {
+                measurementState.isLoop = false;
+            }
 
-    // border
-    ctx.strokeStyle = color3.toHexString?.() || "#ffffff";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(2,2,size.width-4,size.height-4);
+            measurementState.points = [];
+            measurementState.measuring = false;
+            
+            startNewMeasurement();
+        }
+        
+        // Remove the last point from the current measurement
+        function removeLastMeasurementPoint() {
+            if (measurementState.points.length <= 0) return;
+            
+            measurementState.points.pop();
+            
+            if (measurementState.currentLine && measurementState.points.length > 0) {
+                measurementGroup.remove(measurementState.currentLine.line);
+                measurementGroup.remove(measurementState.currentLine.labelObject);
+                
+                const lineIndex = measurementObjects.lines.indexOf(measurementState.currentLine.line);
+                if (lineIndex !== -1) measurementObjects.lines.splice(lineIndex, 1);
+                
+                const labelIndex = measurementObjects.labels.indexOf(measurementState.currentLine.labelObject);
+                if (labelIndex !== -1) measurementObjects.labels.splice(labelIndex, 1);
+                
+                measurementState.currentLine.line.geometry.dispose();
+                measurementState.currentLine.labelObject.material.dispose();
+                
+                if (measurementState.points.length > 1) {
+                    const prevPoints = measurementState.points.slice(-2);
+                    measurementState.currentLine = {
+                        line: measurementObjects.lines[measurementObjects.lines.length - 1],
+                        labelObject: measurementObjects.labels[measurementObjects.labels.length - 1]
+                    };
+                } else {
+                    measurementState.currentLine = null;
+                }
+            }
+            
+            updateMeasurementPreview();
+        }
+        
+        // Start a new measurement
+        function startNewMeasurement() {
+            measurementState.measuring = true;
+            measurementState.points = [];
+            measurementState.previewPoint = new THREE.Vector3();
+            measurementState.currentLine = null;
+            measurementState.snapAxis = null;
+            
+            // Set a new color for this measurement line
+            measurementState.currentLineColor = getNextLineColor();
+            
+            if (measurementState.previewLine) {
+                measurementGroup.remove(measurementState.previewLine);
+                measurementState.previewLine.geometry.dispose();
+                measurementState.previewLine = null;
+            }
+            
+            if (measurementState.previewLabel) {
+                measurementGroup.remove(measurementState.previewLabel);
+                measurementState.previewLabel.material.dispose();
+                measurementState.previewLabel = null;
+            }
+        }
+        
+        // Cancel the current measurement
+        function cancelCurrentMeasurement() {
+            if (measurementState.previewLine) {
+                measurementGroup.remove(measurementState.previewLine);
+                measurementState.previewLine.geometry.dispose();
+                measurementState.previewLine = null;
+            }
+            
+            if (measurementState.previewLabel) {
+                measurementGroup.remove(measurementState.previewLabel);
+                measurementState.previewLabel.material.dispose();
+                measurementState.previewLabel = null;
+            }
+            
+            measurementState.measuring = false;
+            measurementState.points = [];
+            measurementState.currentLine = null;
+            measurementState.snapAxis = null;
+        }
+        
+        // Clear all reference points
+        function clearReferencePoints() {
+            // Clear reference points tracked in measurementObjects.points
+            measurementObjects.points.forEach(point => {
+                measurementGroup.remove(point);
+                point.geometry.dispose();
+                point.material.dispose();
+            });
+            
+            // Find and clear all sphere meshes in measurementGroup that might be reference points
+            measurementGroup.children.slice().forEach(child => {
+                if (child.userData.isReferencePoint || 
+                    (child.isMesh && child.geometry.type === 'SphereGeometry' && 
+                     child.material.color.getHex() === 0xffffff)) {
+                    measurementGroup.remove(child);
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                }
+            });
+            
+            // Reset the array
+            measurementObjects.points = [];
+            
+            // If we're currently measuring, restart the measurement to prevent errors
+            if (measurementState.points.length > 0) {
+                cancelCurrentMeasurement();
+                startNewMeasurement();
+            }
+        }
+        
+        // Clear all measurements
+        function clearAllMeasurements() {
+            measurementObjects.lines.forEach(line => {
+                measurementGroup.remove(line);
+                line.geometry.dispose();
+                line.material.dispose();
+            });
+            
+            measurementObjects.labels.forEach(label => {
+                measurementGroup.remove(label);
+                label.material.dispose();
+            });
+            
+            measurementObjects.lines = [];
+            measurementObjects.labels = [];
+            
+            cancelCurrentMeasurement();
+        }
+        
+        // Handle double-click on labels for editing
+        document.addEventListener('dblclick', (event) => {
+            // Calculate mouse position for raycasting
+            const mouse = new THREE.Vector2(
+                (event.clientX / window.innerWidth) * 2 - 1,
+                -(event.clientY / window.innerHeight) * 2 + 1
+            );
+            
+            // Setup raycaster
+            raycaster.setFromCamera(mouse, camera);
+            
+            // Check for intersections with all measurement labels
+            const intersects = raycaster.intersectObjects(measurementObjects.labels);
+            
+            if (intersects.length > 0) {
+                const label = intersects[0].object;
+                
+                // Skip total labels
+                if (label.userData.isTotal) return;
+                
+                // Release pointer lock if we're in locked mode
+                if (isPointerLocked) {
+                    document.exitPointerLock();
+                    
+                    // Store label for editing after pointer is released
+                    setTimeout(() => {
+                        promptForLabelEdit(label);
+                    }, 100);
+                } else {
+                    promptForLabelEdit(label);
+                }
+            }
+        });
 
-    ctx.font = "24px Arial";
-    ctx.fillStyle = "#ffffff";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, size.width/2, size.height/2);
+        // Handle label editing in a separate function
+        function promptForLabelEdit(label) {
+            const newValue = prompt('Enter reference measurement value:', label.userData.text);
+            
+            if (newValue !== null && !isNaN(parseFloat(newValue))) {
+                const originalDistance = label.userData.originalDistance;
+                measurementState.globalScaleFactor = parseFloat(newValue) / originalDistance;
+                
+                updateAllMeasurementLabels();
+            }
+        }
 
-    dynamicTexture.update();
-  }
-</script>
+        // Support direct click on measurements with pointer lock
+        document.addEventListener('click', (event) => {
+            if (!isPointerLocked) {
+                const mouse = new THREE.Vector2(
+                    (event.clientX / window.innerWidth) * 2 - 1,
+                    -(event.clientY / window.innerHeight) * 2 + 1
+                );
+                
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObjects(measurementObjects.labels);
+                
+                if (intersects.length > 0) {
+                    // This helps prevent double-click and single-click conflicts
+                    event.stopPropagation();
+                }
+            }
+        });
+        
+        // Update all measurement labels with the current scale factor
+        function updateAllMeasurementLabels() {
+            measurementObjects.labels.forEach(label => {
+                if (label.userData.isTotal) {
+                    return;
+                }
+                
+                if (label.userData.start && label.userData.end) {
+                    const distance = label.userData.originalDistance * measurementState.globalScaleFactor;
+                    updateLabelText(label, distance.toFixed(2));
+                }
+            });
+            
+            const totalLabels = measurementObjects.labels.filter(l => l.userData.isTotal);
+            
+            const processedLines = new Set();
+            const measurementGroups = [];
+            
+            for (let i = 0; i < measurementObjects.lines.length; i++) {
+                if (processedLines.has(i)) continue;
+                
+                const group = [];
+                const queue = [i];
+                
+                while (queue.length > 0) {
+                    const lineIndex = queue.shift();
+                    if (processedLines.has(lineIndex)) continue;
+                    
+                    processedLines.add(lineIndex);
+                    const line = measurementObjects.lines[lineIndex];
+                    group.push(line);
+                    
+                    for (let j = 0; j < measurementObjects.lines.length; j++) {
+                        if (processedLines.has(j)) continue;
+                        
+                        const otherLine = measurementObjects.lines[j];
+                        const connected = linesAreConnected(line, otherLine);
+                        
+                        if (connected) queue.push(j);
+                    }
+                }
+                
+                if (group.length > 0) measurementGroups.push(group);
+            }
+            
+            totalLabels.forEach((totalLabel, index) => {
+                if (index < measurementGroups.length) {
+                    const lines = measurementGroups[index];
+                    let totalDistance = 0;
+                    
+                    lines.forEach(line => {
+                        const pos = line.geometry.attributes.position.array;
+                        const start = new THREE.Vector3(pos[0], pos[1], pos[2]);
+                        const end = new THREE.Vector3(pos[3], pos[4], pos[5]);
+                        totalDistance += start.distanceTo(end);
+                    });
+                    
+                    totalDistance *= measurementState.globalScaleFactor;
+                    updateLabelText(totalLabel, `Total: ${totalDistance.toFixed(2)}`);
+                }
+            });
+        }
+        
+        // Check if two lines are connected (share a vertex)
+        function linesAreConnected(line1, line2) {
+            const pos1 = line1.geometry.attributes.position.array;
+            const pos2 = line2.geometry.attributes.position.array;
+            
+            const line1Start = new THREE.Vector3(pos1[0], pos1[1], pos1[2]);
+            const line1End = new THREE.Vector3(pos1[3], pos1[4], pos1[5]);
+            const line2Start = new THREE.Vector3(pos2[0], pos2[1], pos2[2]);
+            const line2End = new THREE.Vector3(pos2[3], pos2[4], pos2[5]);
+            
+            const threshold = 0.001;
+            
+            return (
+                line1Start.distanceToSquared(line2Start) < threshold ||
+                line1Start.distanceToSquared(line2End) < threshold ||
+                line1End.distanceToSquared(line2Start) < threshold ||
+                line1End.distanceToSquared(line2End) < threshold
+            );
+        }
+        
+        // Get the next color from the palette
+        function getNextLineColor() {
+            const color = lineColors[measurementState.currentColorIndex];
+            measurementState.currentColorIndex = (measurementState.currentColorIndex + 1) % lineColors.length;
+            return color;
+        }
+        
+        // Update camera position based on pivot position and rotation
+        function updateCameraPosition() {
+            const quaternion = new THREE.Quaternion()
+                .setFromAxisAngle(vec.worldUp, yaw)
+                .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch));
+            
+            camera.position.copy(pivot.position)
+                .add(new THREE.Vector3(0, 0, cameraDistance).applyQuaternion(quaternion));
+            camera.quaternion.copy(quaternion);
+        }
+        
+        // Update position based on movement state
+        function update(deltaTime) {
+            if (movementState.forward || movementState.right) {
+                camera.getWorldDirection(vec.direction);
+                vec.right.crossVectors(vec.worldUp, vec.direction).normalize();
+                
+                vec.move.set(0, 0, 0);
+                if (movementState.forward) vec.move.addScaledVector(vec.direction, movementState.forward);
+                if (movementState.right) vec.move.addScaledVector(vec.right, -movementState.right);
+                
+                if (vec.move.lengthSq() > 0.001) vec.move.normalize();
+                
+                const speed = movementState.shift ? config.moveSpeed.boost : config.moveSpeed.normal;
+                pivot.position.addScaledVector(vec.move, speed * deltaTime);
+            }
+            
+            updateCameraPosition();
+        }
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            if (isPointerLocked) update(clock.getDelta());
+            
+            if (measurementState.points.length > 0) {
+                updateMeasurementPreview();
+            }
+            
+            // Make sure labels face the camera for better interaction
+            measurementObjects.labels.forEach(label => {
+                label.lookAt(camera.position);
+            });
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Start
+        init();
+    </script>
 </body>
 </html>
