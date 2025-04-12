@@ -57,21 +57,6 @@
         import * as THREE from 'three';
         import * as GaussianSplats3D from 'gaussian-splats-3d';
 
-        // Force-disable workers if crossOriginIsolated is false
-        if (!self.crossOriginIsolated) {
-            if (GaussianSplats3D.SplatLoader) {
-                GaussianSplats3D.SplatLoader.disableWorkers = true;
-            }
-            if (GaussianSplats3D.SpzModel) {
-                GaussianSplats3D.SpzModel.disableWorkers = true;
-            }
-        }
-
-        // Disable SharedArrayBuffer usage if we're not cross-origin isolated
-        if (!self.crossOriginIsolated && GaussianSplats3D.SplatLoader) {
-            GaussianSplats3D.SplatLoader.disableWorkers = true;
-        }
-
         // --- Configuration ---
         const config = {
             initialCameraDistance: 5,
@@ -146,11 +131,19 @@
         function initSplatViewer() {
             if (splatsLoaded) return;
             splatsLoaded = true;
-            splatViewer = new GaussianSplats3D.Viewer({
+            
+            // Remove worker disabling option from Viewer constructor
+            const viewerOptions = {
                 cameraUp: [0, -1, -0.6],
                 initialCameraPosition: [-1, -4, 6],
                 initialCameraLookAt: [0, 4, 0]
-            });
+                // REMOVED: useWorkers: false 
+            };
+
+            // Log the options being passed
+            console.log('Initializing Viewer with options:', viewerOptions);
+
+            splatViewer = new GaussianSplats3D.Viewer(viewerOptions);
         }
 
         // Add a loading progress indicator
@@ -200,7 +193,8 @@
         async function loadSplatFile(file) {
             try {
                 const fileName = file.name.toLowerCase();
-                initSplatViewer();
+                // Ensure initSplatViewer is called *before* loading starts
+                initSplatViewer(); 
                 progressBar.style.display = 'block';
                 updateProgressBar(0);
                 
@@ -251,10 +245,9 @@
                         );
                         
                         console.log('SPZ data loaded successfully:', splatData);
-                        // Add the loaded data to the viewer, similar to PLY
-                        // Try removing options first to see if it resolves the internal error
-                        console.log('Adding SPZ data directly to viewer without options (for testing)');
-                        splatViewer.addSplatBuffers([splatData]); // Removed options
+                        // Add the loaded data to the viewer WITH options again
+                        console.log('Adding SPZ data directly to viewer WITH options');
+                        splatViewer.addSplatBuffers([splatData], options); // ADDED options argument back
 
                     } catch (innerError) {
                         console.error('Detailed error when loading SPZ:', innerError);
