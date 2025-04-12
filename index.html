@@ -208,7 +208,8 @@
                 console.log('GaussianSplats3D API:', {
                     availableMethods: Object.getOwnPropertyNames(GaussianSplats3D),
                     availableClasses: Object.keys(GaussianSplats3D),
-                    SpzModel: GaussianSplats3D.SpzModel ? 'Available' : 'Not available'
+                    SpzModel: GaussianSplats3D.SpzModel ? 'Available' : 'Not available', // Log SpzModel availability
+                    SpzLoader: GaussianSplats3D.SpzLoader ? 'Available' : 'Not available' // Log SpzLoader availability
                 });
                 
                 const arrayBuffer = await file.arrayBuffer();
@@ -235,9 +236,35 @@
 
                 // Load the file using the proper method for each format
                 if (fileFormat === 'spz') {
-                    const spzModel = new GaussianSplats3D.SpzModel();
-                    await spzModel.loadSpz(arrayBuffer);
-                    splatViewer.addModel(spzModel);
+                    // Use SpzLoader instead of SpzModel
+                    console.log('Using SpzLoader.loadFromURL static method for SPZ loading');
+                    const blob = new Blob([arrayBuffer]);
+                    const blobUrl = URL.createObjectURL(blob);
+
+                    try {
+                        // Use the static loadFromURL method from SpzLoader
+                        const splatData = await GaussianSplats3D.SpzLoader.loadFromURL(
+                            blobUrl,
+                            (progress) => {
+                                updateProgressBar(Math.min(progress * 100, 100));
+                            }
+                        );
+                        
+                        console.log('SPZ data loaded successfully:', splatData);
+                        // Add the loaded data to the viewer, similar to PLY
+                        // Try removing options first to see if it resolves the internal error
+                        console.log('Adding SPZ data directly to viewer without options (for testing)');
+                        splatViewer.addSplatBuffers([splatData]); // Removed options
+
+                    } catch (innerError) {
+                        console.error('Detailed error when loading SPZ:', innerError);
+                        console.log('Error stack:', innerError.stack);
+                        throw innerError;
+                    } finally {
+                         // Clean up the blob URL after loading
+                        URL.revokeObjectURL(blobUrl);
+                    }
+
                 } else if (fileFormat === 'ply') {
                     // For PLY files, create a blob URL
                     const blob = new Blob([arrayBuffer]);
@@ -263,8 +290,9 @@
                         
                         // For PLY files, we need to directly add the data to the viewer
                         // rather than constructing a model first
-                        console.log('Adding PLY data directly to viewer');
-                        splatViewer.addSplatBuffers([splatData]);
+                        console.log('Adding PLY data directly to viewer with options');
+                        // Pass the options object when adding the buffer
+                        splatViewer.addSplatBuffers([splatData], options); 
                         
                     } catch (innerError) {
                         console.error('Detailed error when loading PLY:', innerError);
