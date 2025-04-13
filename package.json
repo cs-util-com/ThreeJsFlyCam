@@ -1,6 +1,0 @@
-{
-  "dependencies": {
-    "@mkkellogg/gaussian-splats-3d": "^0.4.7",
-    "spz-js": "^1.2.2"
-  }
-}

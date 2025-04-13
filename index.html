@@ -2,11 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Fly Navigation - Three.js</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Add the COI Service Worker script -->
-    <script src="coi-serviceworker.js"></script> 
 </head>
 <body class="m-0 overflow-hidden bg-gray-800">
     <div id="instructions" class="absolute top-2.5 left-2.5 text-white font-sans bg-black bg-opacity-50 p-2.5 rounded">
@@ -35,29 +33,16 @@
         Double-click label: Edit reference
     </div>
 
-    <!-- File Upload Area for .spz and .ply files -->
-    <div id="splats-dropzone" class="absolute top-20 left-2.5 bg-black bg-opacity-50 p-2.5 text-white rounded">
-        <div class="text-center mb-2">Drag & drop or select files</div>
-        <div class="flex flex-col items-center gap-2">
-            <button id="select-file-btn" class="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded w-full">Select File</button>
-            <input type="file" id="file-input" accept=".spz,.ply" class="hidden">
-            <div class="text-xs italic">Supported: .spz, .ply files</div>
-        </div>
-        <div id="splatsError" class="text-red-400 hidden mt-2"></div>
-    </div>
-
     <script type="importmap">
         {
             "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
             }
         }
     </script>
 
     <script type="module">
         import * as THREE from 'three';
-        import * as GaussianSplats3D from 'gaussian-splats-3d';
 
         // --- Configuration ---
         const config = {
@@ -126,243 +111,6 @@
         raycaster.near = 0.01;
         const centerScreen = new THREE.Vector2(0, 0); // Center of screen for raycasting
         let measurementGroup;
-
-        let splatsLoaded = false;
-        let splatViewer;
-
-        function initSplatViewer() {
-            if (splatsLoaded) return;
-            splatsLoaded = true;
-            
-            // Remove worker disabling option from Viewer constructor
-            const viewerOptions = {
-                cameraUp: [0, -1, -0.6],
-                initialCameraPosition: [-1, -4, 6],
-                initialCameraLookAt: [0, 4, 0]
-                // REMOVED: useWorkers: false 
-            };
-
-            // Log the options being passed
-            console.log('Initializing Viewer with options:', viewerOptions);
-
-            splatViewer = new GaussianSplats3D.Viewer(viewerOptions);
-        }
-
-        // Add a loading progress indicator
-        function createProgressBar() {
-            const progressContainer = document.createElement('div');
-            progressContainer.className = 'fixed top-5 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-70 p-3 rounded text-white z-50';
-            progressContainer.id = 'loading-progress';
-            
-            const progressText = document.createElement('div');
-            progressText.className = 'text-center mb-2';
-            progressText.textContent = 'Loading...';
-            
-            const progressBarOuter = document.createElement('div');
-            progressBarOuter.className = 'w-64 h-4 bg-gray-700 rounded overflow-hidden';
-            
-            const progressBarInner = document.createElement('div');
-            progressBarInner.className = 'h-full bg-blue-500 transition-all duration-300 ease-out';
-            progressBarInner.style.width = '0%';
-            progressBarInner.id = 'progress-bar-inner';
-            
-            progressBarOuter.appendChild(progressBarInner);
-            progressContainer.appendChild(progressText);
-            progressContainer.appendChild(progressBarOuter);
-            
-            document.body.appendChild(progressContainer);
-            progressContainer.style.display = 'none';
-            
-            return progressContainer;
-        }
-
-        const progressBar = createProgressBar();
-
-        function updateProgressBar(percent) {
-            const progressInner = document.getElementById('progress-bar-inner');
-            if (progressInner) {
-                progressInner.style.width = `${percent}%`;
-            }
-            if (percent >= 100) {
-                setTimeout(() => {
-                    progressBar.style.display = 'none';
-                }, 500);
-            } else if (progressBar.style.display === 'none') {
-                progressBar.style.display = 'block';
-            }
-        }
-
-        async function loadSplatFile(file) {
-            try {
-                const fileName = file.name.toLowerCase();
-                // Ensure initSplatViewer is called *before* loading starts
-                initSplatViewer(); 
-                progressBar.style.display = 'block';
-                updateProgressBar(0);
-                
-                // Log available methods for debugging
-                console.log('GaussianSplats3D API:', {
-                    availableMethods: Object.getOwnPropertyNames(GaussianSplats3D),
-                    availableClasses: Object.keys(GaussianSplats3D),
-                    SpzModel: GaussianSplats3D.SpzModel ? 'Available' : 'Not available', // Log SpzModel availability
-                    SpzLoader: GaussianSplats3D.SpzLoader ? 'Available' : 'Not available' // Log SpzLoader availability
-                });
-                
-                const arrayBuffer = await file.arrayBuffer();
-                
-                let fileFormat;
-                if (fileName.endsWith('.spz')) {
-                    fileFormat = 'spz';
-                } else if (fileName.endsWith('.ply')) {
-                    fileFormat = 'ply';
-                } else {
-                    throw new Error('Unsupported file extension');
-                }
-                
-                // Common options for all formats
-                const options = {
-                    splatAlphaRemovalThreshold: 5,
-                    position: [0, 1, 0],
-                    rotation: [0, 0, 0, 1],
-                    scale: [1.5, 1.5, 1.5],
-                    onProgress: (progress) => {
-                        updateProgressBar(Math.min(progress * 100, 100));
-                    }
-                };
-
-                // Load the file using the proper method for each format
-                if (fileFormat === 'spz') {
-                    // Use SpzLoader instead of SpzModel
-                    console.log('Using SpzLoader.loadFromURL static method for SPZ loading');
-                    const blob = new Blob([arrayBuffer]);
-                    const blobUrl = URL.createObjectURL(blob);
-
-                    try {
-                        // Use the static loadFromURL method from SpzLoader
-                        const splatData = await GaussianSplats3D.SpzLoader.loadFromURL(
-                            blobUrl,
-                            (progress) => {
-                                updateProgressBar(Math.min(progress * 100, 100));
-                            }
-                        );
-                        
-                        console.log('SPZ data loaded successfully:', splatData);
-                        // Add the loaded data to the viewer WITH options again
-                        console.log('Adding SPZ data directly to viewer WITH options');
-                        splatViewer.addSplatBuffers([splatData], options); // ADDED options argument back
-
-                    } catch (innerError) {
-                        console.error('Detailed error when loading SPZ:', innerError);
-                        console.log('Error stack:', innerError.stack);
-                        throw innerError;
-                    } finally {
-                         // Clean up the blob URL after loading
-                        URL.revokeObjectURL(blobUrl);
-                    }
-
-                } else if (fileFormat === 'ply') {
-                    // For PLY files, create a blob URL
-                    const blob = new Blob([arrayBuffer]);
-                    const blobUrl = URL.createObjectURL(blob);
-                    
-                    // Use the static loadFromURL method directly
-                    console.log('Using SplatLoader.loadFromURL static method for PLY loading');
-                    
-                    try {
-                        // From the logs, we see loadFromURL is available as a static method
-                        const splatData = await GaussianSplats3D.SplatLoader.loadFromURL(
-                            blobUrl, 
-                            (progress) => {
-                                updateProgressBar(Math.min(progress * 100, 100));
-                            }
-                        );
-                        
-                        console.log('PLY data loaded successfully:', splatData);
-                        console.log('Available model types:', {
-                            modelClasses: Object.keys(GaussianSplats3D).filter(key => key.includes('Model')),
-                            splatModelType: typeof GaussianSplats3D.SplatModel
-                        });
-                        
-                        // For PLY files, we need to directly add the data to the viewer
-                        // rather than constructing a model first
-                        console.log('Adding PLY data directly to viewer with options');
-                        // Pass the options object when adding the buffer
-                        splatViewer.addSplatBuffers([splatData], options); 
-                        
-                    } catch (innerError) {
-                        console.error('Detailed error when loading PLY:', innerError);
-                        console.log('Error stack:', innerError.stack);
-                        throw innerError;
-                    }
-                    
-                    // Clean up the blob URL after loading
-                    URL.revokeObjectURL(blobUrl);
-                }
-                
-                console.log(`${fileName} loaded successfully and added to scene`);
-                splatViewer.start();
-                updateProgressBar(100);
-            } catch (err) {
-                console.error('Error loading file:', err);
-                console.log('Error stack:', err.stack);
-                showSplatError(`Failed to load file: ${err.message || 'Unknown error'}`);
-                progressBar.style.display = 'none';
-            }
-        }
-
-        function showSplatError(msg) {
-            const errDiv = document.getElementById('splatsError');
-            errDiv.innerText = msg;
-            errDiv.classList.remove('hidden');
-        }
-
-        // Set up the file button click handler
-        document.getElementById('select-file-btn').addEventListener('click', () => {
-            document.getElementById('file-input').click();
-        });
-
-        // Handle file input selection
-        document.getElementById('file-input').addEventListener('change', (event) => {
-            const file = event.target.files[0];
-            if (!file) return;
-            
-            document.getElementById('splatsError').classList.add('hidden');
-            const name = file.name.toLowerCase();
-            
-            if (name.endsWith('.spz') || name.endsWith('.ply')) {
-                loadSplatFile(file);
-            } else {
-                showSplatError('Unsupported file type. Please select a .spz or .ply file.');
-            }
-        });
-
-        // Set up drag and drop handlers
-        const dropzone = document.getElementById('splats-dropzone');
-        dropzone.addEventListener('dragover', (event) => {
-            event.preventDefault();
-            dropzone.classList.add('bg-opacity-70');
-        });
-        
-        dropzone.addEventListener('dragleave', () => {
-            dropzone.classList.remove('bg-opacity-70');
-        });
-        
-        dropzone.addEventListener('drop', (event) => {
-            event.preventDefault();
-            dropzone.classList.remove('bg-opacity-70');
-            
-            const file = event.dataTransfer.files[0];
-            if (!file) return;
-            
-            document.getElementById('splatsError').classList.add('hidden');
-            const name = file.name.toLowerCase();
-            
-            if (name.endsWith('.spz') || name.endsWith('.ply')) {
-                loadSplatFile(file);
-            } else {
-                showSplatError('Unsupported file type. Please drop a .spz or .ply file.');
-            }
-        });
 
         // Create all mesh objects from configuration array
         function createObjects() {
