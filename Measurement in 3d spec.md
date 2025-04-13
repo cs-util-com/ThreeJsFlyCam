@@ -1,143 +1,107 @@
-# 3D Measurement Tool Specification
+# 3D Measurement Tool - User Guide
 
 ## 1. Overview
 
-This document outlines the specifications for an interactive 3D measurement tool integrated within a Three.js scene utilizing fly navigation controls. The tool allows users to measure distances, polylines, and areas directly within the 3D environment.
+This guide explains how to use the interactive 3D measurement tool. You can measure distances between points, the length of multi-segment paths (polylines), and the area of closed shapes directly within the 3D view while navigating freely.
 
-## 2. Core Features
+## 2. How to Measure
 
-### 2.1. Point Placement
+### 2.1. Marking Points
 
-*   **Action:** Left-click in the 3D view while pointer-locked.
-*   **Behavior:**
-    *   A raycast originates from the center of the screen (crosshair).
-    *   If the ray intersects an existing scene object (excluding measurement objects) or a previously placed reference point, a new measurement point is created at the intersection.
-    *   If no intersection occurs, a point is placed along the camera's view direction at a default distance (e.g., 5 units) from the last placed point or camera position if it's the first point.
-    *   Placed points are visualized as small white spheres (e.g., `SphereGeometry(0.05, 8, 8)`).
-    *   Points are added to the `measurementGroup` and tracked in `measurementObjects.points`.
+*   **Goal:** Mark specific locations in the 3D scene to start measuring.
+*   **Action:** While navigating (mouse locked), aim the central crosshair at a surface or an existing measurement point and **left-click**.
+*   **Result:** A small white sphere appears at the location you clicked, marking your first measurement point. If you click in empty space, a point is placed a short distance in front of you.
 
-### 2.2. Line Segment Creation
+### 2.2. Measuring Distances (Single Segment)
 
-*   **Action:** Placing a second point after a first point has been placed.
-*   **Behavior:**
-    *   A solid line segment is drawn between the last two placed points.
-    *   The line uses a color from a predefined pastel palette (`lineColors`), cycling through the palette for each new measurement sequence.
-    *   A text label (Sprite) is created at the midpoint of the segment, displaying the calculated distance between the two points.
-    *   The distance displayed on the label is affected by the `globalScaleFactor`.
-    *   The label background and border color match the line color.
-    *   Lines and labels are added to the `measurementGroup` and tracked in `measurementObjects.lines` and `measurementObjects.labels`.
+*   **Goal:** Measure the straight-line distance between two points.
+*   **Action:** After placing your first point, aim and **left-click** again to place a second point.
+*   **Result:** A colored line appears connecting the two points. A label appears at the middle of the line showing the calculated distance. Each new measurement sequence will use a different color.
 
-### 2.3. Polyline Measurement
+### 2.3. Measuring Paths (Polylines)
 
-*   **Action:** Placing three or more points consecutively before completing the measurement.
-*   **Behavior:**
-    *   Each new point creates a new line segment connected to the previous point.
-    *   All segments within the current measurement sequence share the same color.
-    *   Individual segment distances are displayed.
+*   **Goal:** Measure the total length of a path made of multiple connected segments.
+*   **Action:** Place three or more points consecutively by **left-clicking** for each point.
+*   **Result:** Each click adds a new point and a new colored line segment connected to the previous point. Each segment shows its individual distance. All segments in the current path measurement share the same color.
 
-### 2.4. Measurement Completion
+### 2.4. Finishing a Measurement
 
-*   **Action:** Pressing `Enter` or `R` key.
-*   **Behavior:**
-    *   Finalizes the current measurement sequence (polyline or single segment).
-    *   Removes the preview line and label.
-    *   If the sequence contains more than two points (i.e., a polyline), a "Total:" label is created near the center of the polyline, displaying the sum of all segment distances in that sequence. The total distance is affected by the `globalScaleFactor`.
-    *   The system prepares for a new measurement sequence, selecting the next color from the palette.
-    *   If only one point was placed, the measurement is cancelled.
+*   **Goal:** Finalize the current distance or path measurement.
+*   **Action:** Press the **Enter** or **R** key.
+*   **Result:**
+    *   The temporary preview line disappears.
+    *   If you measured a path (3+ points), a "Total:" label appears near the path's center, showing the sum of all segment lengths.
+    *   The tool is ready for you to start a new measurement with a new color.
+    *   If you only placed one point, the measurement is cancelled.
 
-### 2.5. Loop Closure and Area Calculation
+### 2.5. Measuring Area (Closing a Shape)
 
-*   **Action:** Placing a point very close (within a small threshold, e.g., 0.01 units) to the *first* point of the current measurement sequence (requires at least 3 points placed).
-*   **Behavior:**
-    *   The last placed point snaps exactly to the position of the first point, closing the loop.
-    *   The surface area of the resulting polygon is calculated using Newell's method.
-    *   An "Area:" label is created near the center of the polygon, displaying the calculated area. The area is affected by the square of the `globalScaleFactor`.
-    *   The measurement sequence is automatically completed.
+*   **Goal:** Measure the surface area of a flat shape you draw.
+*   **Action:** While creating a path (after placing at least two points), place the *next* point very close to your *first* point in the current sequence.
+*   **Result:**
+    *   The path automatically snaps closed, forming a polygon.
+    *   An "Area:" label appears near the center of the shape, showing the calculated area.
+    *   The measurement is automatically finished.
 
-### 2.6. Preview Visualization
+### 2.6. Using the Live Preview
 
-*   **Behavior:**
-    *   When at least one point has been placed in the current sequence, a dashed preview line is drawn from the last placed point to the current crosshair intersection point (or a point along the view direction if no intersection).
-    *   A preview distance label is displayed at the midpoint of the dashed line.
-    *   The preview line and label update in real-time as the user looks around.
-    *   The preview line and label use the color assigned to the current measurement sequence.
+*   **Goal:** See the potential next segment and its distance before clicking.
+*   **Action:** After placing at least one point, simply look around.
+*   **Result:** A dashed line appears from your last placed point to where your crosshair is aiming. A label on this dashed line shows the distance in real-time. This helps you position the next point accurately.
 
-### 2.7. Axis Snapping
+### 2.7. Snapping for Precision (Axis Lock)
 
-*   **Action:** Pressing Arrow Keys (`Up/Down` for Y, `Left` for X, `Right` for Z) before placing the *next* point.
-*   **Behavior:**
-    *   Activates snapping mode for the specified axis (`x`, `y`, or `z`).
-    *   When placing the next point, its position will be constrained to share the selected axis coordinate(s) with the *previous* point.
-        *   X-Snap: New point's Y and Z match the previous point's Y and Z.
-        *   Y-Snap: New point's X and Z match the previous point's X and Z.
-        *   Z-Snap: New point's X and Y match the previous point's X and Y.
-    *   The preview line and point visualization update to reflect the snapping constraint.
-    *   Snapping is deactivated after the point is placed.
+*   **Goal:** Place the next point perfectly aligned horizontally or vertically with the previous point.
+*   **Action:** *Before* placing the next point, press an **Arrow Key**:
+    *   **Left Arrow:** Lock to the X-axis (aligns Y and Z coordinates).
+    *   **Right Arrow:** Lock to the Z-axis (aligns X and Y coordinates).
+    *   **Up/Down Arrow:** Lock to the Y-axis (aligns X and Z coordinates).
+*   **Result:** The preview line and point will jump to the snapped position. The next **left-click** will place the point on that axis. Snapping turns off automatically after the click.
 
-### 2.8. Point Snapping
+### 2.8. Snapping to Existing Points
 
-*   **Behavior:**
-    *   When placing a point, if the raycast intersects an existing reference point sphere, the new point snaps exactly to the center of that existing point.
+*   **Goal:** Connect precisely to a point you've already placed.
+*   **Action:** Aim the crosshair directly at an existing white sphere (measurement point) and **left-click**.
+*   **Result:** The new point snaps exactly to the center of the existing point.
 
-### 2.9. Reference Measurement and Scaling
+### 2.9. Setting a Scale (Reference Measurement)
 
-*   **Action:** Double-clicking on a segment distance label (not a "Total:" or "Area:" label).
-*   **Behavior:**
-    *   Pointer lock is released (if active).
-    *   A prompt appears, asking the user to "Enter reference measurement value:", pre-filled with the label's current text.
-    *   If the user enters a valid number:
-        *   The `globalScaleFactor` is recalculated based on the ratio of the entered value to the segment's *original* measured distance (before scaling). `globalScaleFactor = newValue / originalDistance`.
-        *   All existing measurement labels (segment distances, total distances, areas) are updated immediately to reflect the new `globalScaleFactor`. Areas are scaled by the factor squared.
-*   **Initial State:** `globalScaleFactor` defaults to `1.0`.
+*   **Goal:** Calibrate all measurements based on a known real-world distance.
+*   **Action:** **Double-click** on any *segment distance label* (not "Total:" or "Area:").
+*   **Result:**
+    *   Navigation pauses (mouse is released).
+    *   A prompt appears asking you to "Enter reference measurement value:", pre-filled with the label's current value.
+    *   Enter the known real-world distance for that segment and click OK.
+    *   All measurement labels in the scene (distances, totals, areas) will update instantly based on this new scale.
 
-### 2.10. Removing Points
+### 2.10. Correcting Mistakes (Remove Last Point)
 
-*   **Action:** Pressing `Backspace` or `Delete` key.
-*   **Behavior:**
-    *   Removes the last placed point in the *current* measurement sequence.
-    *   Removes the associated line segment and distance label connected to that point.
-    *   Updates the preview line to originate from the new last point.
-    *   Does not affect completed measurements or reference points not part of the active measurement.
+*   **Goal:** Undo the placement of the most recent point in the *current* measurement.
+*   **Action:** Press the **Backspace** or **Delete** key.
+*   **Result:** The last point placed, along with its connecting line and label, is removed. You can continue measuring from the previous point. This only affects the measurement you are actively working on.
 
-### 2.11. Clearing Data
+### 2.11. Clearing Your Work
 
-*   **Clear Reference Points Button:**
-    *   Prompts the user for confirmation.
-    *   Removes *all* placed reference point spheres from the scene and internal tracking.
-    *   If a measurement is in progress, it is cancelled.
-*   **Clear Measurements Button:**
-    *   Prompts the user for confirmation.
-    *   Removes *all* measurement lines and labels (segment, total, area) from the scene and internal tracking.
-    *   Does *not* remove reference point spheres.
-    *   If a measurement is in progress, it is cancelled.
+*   **Goal:** Remove previously placed points or measurement lines/labels.
+*   **Actions:**
+    *   Click the **"Clear Reference Points"** button: Removes *all* the white spheres (points) you've placed. Asks for confirmation first.
+    *   Click the **"Clear Measurements"** button: Removes *all* the colored lines and labels (distances, totals, areas). Does *not* remove the white spheres. Asks for confirmation first.
+*   **Result:** The selected items are removed from the scene. Any measurement in progress is cancelled.
 
-## 3. User Controls Summary
+## 3. Controls Summary
 
-*   **Left Mouse Click:**
-    *   If pointer not locked: Request pointer lock.
-    *   If pointer locked: Place measurement point.
-*   **Double Left Mouse Click:** (On a distance label) Initiate reference measurement editing.
-*   **Arrow Keys (Up/Down/Left/Right):** Activate axis snapping for the next point (Y/Y/X/Z).
-*   **Backspace / Delete:** Remove the last point of the current measurement.
-*   **Enter / R:** Complete the current measurement sequence.
-*   **ESC:** Release pointer lock.
+*   **Navigate:** WASD (Move), Shift (Boost), Mouse (Look), ESC (Release Mouse)
+*   **Start Navigation / Place Point:** Left-click
+*   **Set Scale:** Double-click on a distance label
+*   **Axis Snap (Before Clicking):** Arrow Keys (Left=X, Right=Z, Up/Down=Y)
+*   **Remove Last Point:** Backspace / Delete
+*   **Complete Measurement:** Enter / R
+*   **Clear Points:** "Clear Reference Points" button
+*   **Clear Lines/Labels:** "Clear Measurements" button
 
-## 4. Visual Style
+## 4. Visual Cues
 
-*   **Reference Points:** Small, solid white spheres.
-*   **Measurement Lines:** Solid lines using a cycling palette of pastel colors (e.g., Mint, Pink, Orange, Blue...).
-*   **Preview Line:** Dashed line using the color of the current measurement sequence.
-*   **Labels:**
-    *   Rendered as `THREE.Sprite` using `CanvasTexture`.
-    *   Display text (distance, total, area) in white font.
-    *   Background color is a slightly darker shade of the corresponding line color with some transparency.
-    *   Border color matches the corresponding line color.
-    *   Labels always face the camera.
-    *   Rendered on top of other scene elements (`renderOrder = 999`, `depthTest = false`).
-
-## 5. Technical Details
-
-*   All measurement objects (points, lines, labels) are added to a dedicated `THREE.Group` (`measurementGroup`) for easier management.
-*   Raycasting (`THREE.Raycaster`) is used for point placement and label interaction.
-*   State is managed in `measurementState` and `measurementObjects` objects.
-*   Uses a predefined list of hex color codes (`lineColors`) for measurement sequences.
+*   **Points:** Small white spheres mark locations.
+*   **Lines:** Colored lines connect points. Different colors for different measurement sequences (distance, polyline, area).
+*   **Preview:** A dashed line shows where the next segment will go.
+*   **Labels:** Show calculated values (distance, total length, area) in white text on colored backgrounds that match the lines. Labels always face you.
